@@ -4,6 +4,8 @@
 
 /** @typedef {{ position: Vec2, velocity: Vec2, radius: number, color: string, age: number, lifespan: number }} Particle */
 
+/** @typedef {{ position: Vec2, mass: number, radius: number }} OrbitalAnchor */
+
 /**
  * Emitter spawns particles at the canvas center with randomized initial velocities.
  * @type {{
@@ -24,10 +26,24 @@ const emitterConfig = {
   lifespan: 4,
 };
 
-/** Global physics constants. g_y pulls particles downward: a_y = g_y */
+/**
+ * Global physics constants.
+ * G scales Newtonian attraction: F = G · (m₁ · m₂) / r²
+ * softening clamps r so force stays finite near anchors.
+ */
 const physicsConfig = {
-  gravity: 80,
+  G: 500,
+  softening: 10,
+  maxForce: 12000,
   maxParticles: 2000,
+};
+
+/** Visual + mass defaults for user-placed gravitational nodes */
+const anchorConfig = {
+  mass: 800,
+  radius: 14,
+  color: '#ffd166',
+  glowColor: 'rgba(255, 209, 102, 0.25)',
 };
 
 // ── Physics engine state (decoupled from rendering) ──────────────────────────
@@ -35,8 +51,14 @@ const physicsConfig = {
 /** @type {Particle[]} */
 const particles = [];
 
+/** @type {OrbitalAnchor[]} */
+const anchors = [];
+
 /** Accumulated spawn timer in seconds */
 let spawnAccumulator = 0;
+
+/** Unit mass for emitter particles (m₁ in F = G·m₁·m₂/r²) */
+const PARTICLE_MASS = 1;
 
 /**
  * @param {number} min
@@ -75,8 +97,61 @@ function spawnParticle(centerX, centerY) {
 }
 
 /**
+ * Newtonian pull from every anchor: a = F/m₁ = G·m₂/r_eff² toward anchor.
+ * r_eff = max(r, softening) prevents the r→0 singularity ("hyperspace slingshot").
+ * @param {Particle} particle
+ * @returns {Vec2}
+ */
+function computeAnchorAcceleration(particle) {
+  let ax = 0;
+  let ay = 0;
+  const G = physicsConfig.G;
+  const softening = physicsConfig.softening;
+  const maxForce = physicsConfig.maxForce;
+
+  for (const anchor of anchors) {
+    const dx = anchor.position.x - particle.position.x;
+    const dy = anchor.position.y - particle.position.y;
+    const r = Math.hypot(dx, dy);
+
+    if (r < 1e-6) continue;
+
+    const rEff = Math.max(r, softening);
+    const rEffSq = rEff * rEff;
+
+    // F = G · (m₁ · m₂) / r²  →  |F| clamped, direction toward anchor
+    let forceMag = (G * PARTICLE_MASS * anchor.mass) / rEffSq;
+    forceMag = Math.min(forceMag, maxForce);
+
+    const dirX = dx / r;
+    const dirY = dy / r;
+
+    ax += (dirX * forceMag) / PARTICLE_MASS;
+    ay += (dirY * forceMag) / PARTICLE_MASS;
+  }
+
+  return { x: ax, y: ay };
+}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ */
+function addOrbitalAnchor(x, y) {
+  anchors.push({
+    position: { x, y },
+    mass: anchorConfig.mass,
+    radius: anchorConfig.radius,
+  });
+}
+
+function clearAnchors() {
+  anchors.length = 0;
+}
+
+/**
  * Integrate particle motion for one timestep.
- * v += a·dt,  p += v·dt  where a_y = g (constant downward acceleration)
+ * v += a·dt,  p += v·dt  where a comes from all Orbital Anchors
  * @param {number} dt - delta time in seconds
  * @param {number} canvasWidth
  * @param {number} canvasHeight
@@ -84,7 +159,6 @@ function spawnParticle(centerX, centerY) {
 function updatePhysics(dt, canvasWidth, canvasHeight) {
   const centerX = canvasWidth * 0.5;
   const centerY = canvasHeight * 0.5;
-  const g_y = physicsConfig.gravity;
 
   spawnAccumulator += dt;
   const spawnInterval = 1 / emitterConfig.spawnRate;
@@ -97,7 +171,9 @@ function updatePhysics(dt, canvasWidth, canvasHeight) {
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
 
-    p.velocity.y += g_y * dt;
+    const accel = computeAnchorAcceleration(p);
+    p.velocity.x += accel.x * dt;
+    p.velocity.y += accel.y * dt;
     p.position.x += p.velocity.x * dt;
     p.position.y += p.velocity.y * dt;
     p.age += dt;
@@ -126,6 +202,11 @@ function scaleParticlePositions(scaleX, scaleY) {
     p.velocity.x *= scaleX;
     p.velocity.y *= scaleY;
   }
+
+  for (const anchor of anchors) {
+    anchor.position.x *= scaleX;
+    anchor.position.y *= scaleY;
+  }
 }
 
 function clearParticles() {
@@ -147,6 +228,26 @@ function render(ctx, width, height) {
   ctx.beginPath();
   ctx.arc(width * 0.5, height * 0.5, 6, 0, Math.PI * 2);
   ctx.fill();
+
+  for (const anchor of anchors) {
+    const { x, y } = anchor.position;
+    const glowRadius = anchor.radius * 2.2;
+
+    ctx.fillStyle = anchorConfig.glowColor;
+    ctx.beginPath();
+    ctx.arc(x, y, glowRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = anchorConfig.color;
+    ctx.beginPath();
+    ctx.arc(x, y, anchor.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.beginPath();
+    ctx.arc(x - anchor.radius * 0.25, y - anchor.radius * 0.25, anchor.radius * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   for (const p of particles) {
     const alpha = Math.max(0, 1 - p.age / p.lifespan);
@@ -225,6 +326,7 @@ function loop(timestamp) {
   }
 
   document.getElementById('particleCount').textContent = String(particles.length);
+  document.getElementById('anchorCount').textContent = String(anchors.length);
 
   requestAnimationFrame(loop);
 }
@@ -262,7 +364,7 @@ function initUI() {
     if (emitterConfig.speedMin > v) emitterConfig.speedMin = v;
   });
   bindRange('particleSize', 'particleSizeValue', (v) => { emitterConfig.radius = v; });
-  bindRange('gravity', 'gravityValue', (v) => { physicsConfig.gravity = v; });
+  bindRange('gravityG', 'gravityGValue', (v) => { physicsConfig.G = v; });
   bindRange('lifespan', 'lifespanValue', (v) => { emitterConfig.lifespan = v; }, parseFloat);
 
   const colorInput = /** @type {HTMLInputElement} */ (document.getElementById('particleColor'));
@@ -271,6 +373,12 @@ function initUI() {
   });
 
   document.getElementById('clearBtn').addEventListener('click', clearParticles);
+  document.getElementById('clearAnchorsBtn').addEventListener('click', clearAnchors);
+
+  canvas.addEventListener('click', (event) => {
+    const rect = canvas.getBoundingClientRect();
+    addOrbitalAnchor(event.clientX - rect.left, event.clientY - rect.top);
+  });
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
