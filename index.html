@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gravity Art</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <header class="sidebar__header">
+      <h1 class="sidebar__title">Gravity Art</h1>
+      <p class="sidebar__subtitle">Particle sandbox</p>
+    </header>
+
+    <section class="sidebar__section">
+      <h2 class="sidebar__section-title">Emitter</h2>
+
+      <label class="control">
+        <span class="control__label">Spawn rate <output id="spawnRateValue">8</output>/s</span>
+        <input type="range" id="spawnRate" min="1" max="30" value="8" step="1">
+      </label>
+
+      <label class="control">
+        <span class="control__label">Speed min <output id="speedMinValue">40</output></span>
+        <input type="range" id="speedMin" min="10" max="200" value="40" step="5">
+      </label>
+
+      <label class="control">
+        <span class="control__label">Speed max <output id="speedMaxValue">120</output></span>
+        <input type="range" id="speedMax" min="20" max="400" value="120" step="5">
+      </label>
+
+      <label class="control">
+        <span class="control__label">Particle size <output id="particleSizeValue">3</output>px</span>
+        <input type="range" id="particleSize" min="1" max="8" value="3" step="0.5">
+      </label>
+
+      <label class="control">
+        <span class="control__label">Color</span>
+        <input type="color" id="particleColor" value="#6ee7ff">
+      </label>
+    </section>
+
+    <section class="sidebar__section">
+      <h2 class="sidebar__section-title">Physics</h2>
+
+      <label class="control">
+        <span class="control__label">Gravity <output id="gravityValue">80</output></span>
+        <input type="range" id="gravity" min="0" max="400" value="80" step="10">
+      </label>
+
+      <label class="control">
+        <span class="control__label">Lifespan <output id="lifespanValue">4.0</output>s</span>
+        <input type="range" id="lifespan" min="1" max="10" value="4" step="0.5">
+      </label>
+    </section>
+
+    <section class="sidebar__section sidebar__stats">
+      <h2 class="sidebar__section-title">Stats</h2>
+      <dl class="stats">
+        <div class="stats__row">
+          <dt>Particles</dt>
+          <dd id="particleCount">0</dd>
+        </div>
+        <div class="stats__row">
+          <dt>FPS</dt>
+          <dd id="fps">—</dd>
+        </div>
+      </dl>
+    </section>
+
+    <footer class="sidebar__footer">
+      <button type="button" id="clearBtn" class="btn">Clear particles</button>
+    </footer>
+  </aside>
+
+  <main class="stage">
+    <canvas id="canvas"></canvas>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
