@@ -1,4 +1,5 @@
-import { ASSET_TYPES, getAssetRenderer } from './assetInjector.js';
+import { ASSET_TYPES, getAssetRenderer, setDesignerSprite } from './assetInjector.js';
+import { initSpriteDesigner } from './spriteDesigner.js';
 
 // ── Declarative configuration ────────────────────────────────────────────────
 
@@ -547,7 +548,36 @@ function applyPreset(presetId) {
   syncSidebarToConfig(preset);
 }
 
+function initSidebarTabs() {
+  const tabs = document.querySelectorAll('.sidebar-tabs__btn');
+  const panels = document.querySelectorAll('.sidebar-panel');
+
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const panelId = /** @type {HTMLElement} */ (tab).dataset.panel;
+
+      tabs.forEach((t) => {
+        const isActive = t === tab;
+        t.classList.toggle('sidebar-tabs__btn--active', isActive);
+        t.setAttribute('aria-selected', String(isActive));
+      });
+
+      panels.forEach((panel) => {
+        const isActive = panel.id === `panel-${panelId}`;
+        panel.classList.toggle('sidebar-panel--active', isActive);
+        if (isActive) {
+          panel.removeAttribute('hidden');
+        } else {
+          panel.setAttribute('hidden', '');
+        }
+      });
+    });
+  });
+}
+
 function initUI() {
+  initSidebarTabs();
+
   const presetSelect = /** @type {HTMLSelectElement} */ (document.getElementById('stylePreset'));
   for (const preset of STYLE_PRESETS) {
     const option = document.createElement('option');
@@ -602,6 +632,16 @@ function initUI() {
   });
 
   syncPaletteInputs(emitterConfig.palette);
+
+  initSpriteDesigner({
+    onApply: (compiledCanvas) => {
+      emitterConfig.assetType = ASSET_TYPES.sprite;
+      activeAssetRenderer = setDesignerSprite(compiledCanvas);
+
+      const assetSelect = /** @type {HTMLSelectElement} */ (document.getElementById('assetType'));
+      assetSelect.value = ASSET_TYPES.sprite;
+    },
+  });
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
