@@ -4,7 +4,7 @@
 
 /** @typedef {'circle' | 'square' | 'star' | 'pixel' | 'sprite'} AssetType */
 
-/** @typedef {(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number, color: string, alpha: number) => void} AssetDrawFn */
+/** @typedef {(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number, color: string, alpha: number, angle?: number) => void} AssetDrawFn */
 
 /** @typedef {HTMLImageElement | HTMLCanvasElement} SpriteSource */
 
@@ -28,14 +28,21 @@ const shapeRenderers = {
     ctx.fill();
   },
 
-  square(ctx, x, y, radius, color, alpha) {
+  square(ctx, x, y, radius, color, alpha, angle = 0) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
     ctx.globalAlpha = alpha;
     ctx.fillStyle = color;
     const size = radius * 1.6;
-    ctx.fillRect(x - size * 0.5, y - size * 0.5, size, size);
+    ctx.fillRect(-size * 0.5, -size * 0.5, size, size);
+    ctx.restore();
   },
 
-  star(ctx, x, y, radius, color, alpha) {
+  star(ctx, x, y, radius, color, alpha, angle = 0) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
     ctx.globalAlpha = alpha;
     ctx.fillStyle = color;
     ctx.beginPath();
@@ -44,23 +51,28 @@ const shapeRenderers = {
     const inner = radius * 0.55;
     for (let i = 0; i < spikes * 2; i++) {
       const r = i % 2 === 0 ? outer : inner;
-      const angle = (i * Math.PI) / spikes - Math.PI / 2;
-      const px = x + Math.cos(angle) * r;
-      const py = y + Math.sin(angle) * r;
+      const spikeAngle = (i * Math.PI) / spikes - Math.PI / 2;
+      const px = Math.cos(spikeAngle) * r;
+      const py = Math.sin(spikeAngle) * r;
       if (i === 0) ctx.moveTo(px, py);
       else ctx.lineTo(px, py);
     }
     ctx.closePath();
     ctx.fill();
+    ctx.restore();
   },
 
-  pixel(ctx, x, y, radius, color, alpha) {
+  pixel(ctx, x, y, radius, color, alpha, angle = 0) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
     ctx.globalAlpha = alpha;
     ctx.fillStyle = color;
     const size = Math.max(2, Math.round(radius));
-    const px = Math.round(x - size * 0.5);
-    const py = Math.round(y - size * 0.5);
+    const px = Math.round(-size * 0.5);
+    const py = Math.round(-size * 0.5);
     ctx.fillRect(px, py, size, size);
+    ctx.restore();
   },
 };
 
@@ -69,7 +81,7 @@ const shapeRenderers = {
  * Falls back to a circle if no image is loaded yet.
  * @type {AssetDrawFn}
  */
-function spriteRenderer(ctx, x, y, radius, color, alpha) {
+function spriteRenderer(ctx, x, y, radius, color, alpha, angle = 0) {
   const renderer = /** @type {AssetRenderer} */ (spriteRenderer._active);
   const source = renderer?.image;
   if (!source || !isSpriteSourceReady(source)) {
@@ -78,10 +90,14 @@ function spriteRenderer(ctx, x, y, radius, color, alpha) {
   }
 
   const size = radius * 3;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
   ctx.globalAlpha = alpha;
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(source, x - size * 0.5, y - size * 0.5, size, size);
+  ctx.drawImage(source, -size * 0.5, -size * 0.5, size, size);
   ctx.imageSmoothingEnabled = true;
+  ctx.restore();
 }
 
 /**
