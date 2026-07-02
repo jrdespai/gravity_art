@@ -13,6 +13,18 @@
       <p class="sidebar__subtitle">Experiment lab</p>
     </header>
 
+    <nav class="sidebar-tabs" role="tablist" aria-label="Sidebar panels">
+      <button type="button" class="sidebar-tabs__btn sidebar-tabs__btn--active" role="tab" aria-selected="true" aria-controls="panel-simulation" id="tab-simulation" data-panel="simulation">
+        Simulation Controls
+      </button>
+      <button type="button" class="sidebar-tabs__btn" role="tab" aria-selected="false" aria-controls="panel-sprite" id="tab-sprite" data-panel="sprite">
+        Sprite Designer
+      </button>
+    </nav>
+
+    <div class="sidebar-panels">
+    <div class="sidebar-panel sidebar-panel--active" id="panel-simulation" role="tabpanel" aria-labelledby="tab-simulation">
+
     <section class="sidebar__section">
       <h2 class="sidebar__section-title">Style Preset</h2>
 
@@ -99,7 +111,7 @@
           <option value="sprite">Custom Sprite</option>
         </select>
       </label>
-      <p class="sidebar__hint">Swap shapes here — plug in custom sprite images via the Asset Injector module.</p>
+      <p class="sidebar__hint">Use the Sprite Designer tab to draw custom pixel art, or pick a built-in shape here.</p>
     </section>
 
     <section class="sidebar__section">
@@ -145,6 +157,40 @@
       <button type="button" id="clearAnchorsBtn" class="btn">Clear all anchors</button>
       <button type="button" id="clearBtn" class="btn btn--secondary">Clear particles</button>
     </footer>
+
+    </div><!-- /panel-simulation -->
+
+    <div class="sidebar-panel" id="panel-sprite" role="tabpanel" aria-labelledby="tab-sprite" hidden>
+
+    <section class="sidebar__section">
+      <h2 class="sidebar__section-title">Draw Your Sprite</h2>
+      <p class="sidebar__hint">Click and drag to paint on the 16×16 grid.</p>
+
+      <div class="sprite-editor">
+        <canvas id="spriteGrid" class="sprite-editor__grid" width="224" height="224" aria-label="16 by 16 pixel art grid"></canvas>
+      </div>
+    </section>
+
+    <section class="sidebar__section">
+      <h2 class="sidebar__section-title">Colors</h2>
+      <div class="sprite-palette" id="spritePalette" role="group" aria-label="Sprite color palette"></div>
+    </section>
+
+    <section class="sidebar__section">
+      <h2 class="sidebar__section-title">Tools</h2>
+      <div class="sprite-tools">
+        <button type="button" id="spriteClearBtn" class="btn btn--secondary">Clear Canvas</button>
+        <button type="button" id="spriteFillBtn" class="btn btn--secondary">Fill Canvas</button>
+      </div>
+    </section>
+
+    <section class="sidebar__section">
+      <button type="button" id="spriteApplyBtn" class="btn btn--accent">Apply to Particles</button>
+      <p class="sidebar__hint">New particles will use your pixel art sprite.</p>
+    </section>
+
+    </div><!-- /panel-sprite -->
+    </div><!-- /sidebar-panels -->
   </aside>
 
   <main class="stage">

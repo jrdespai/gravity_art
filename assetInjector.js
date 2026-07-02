@@ -6,7 +6,9 @@
 
 /** @typedef {(ctx: CanvasRenderingContext2D, x: number, y: number, radius: number, color: string, alpha: number) => void} AssetDrawFn */
 
-/** @typedef {{ type: AssetType, image: HTMLImageElement | null, draw: AssetDrawFn }} AssetRenderer */
+/** @typedef {HTMLImageElement | HTMLCanvasElement} SpriteSource */
+
+/** @typedef {{ type: AssetType, image: SpriteSource | null, draw: AssetDrawFn }} AssetRenderer */
 
 export const ASSET_TYPES = /** @type {const} */ ({
   circle: 'circle',
@@ -69,15 +71,28 @@ const shapeRenderers = {
  */
 function spriteRenderer(ctx, x, y, radius, color, alpha) {
   const renderer = /** @type {AssetRenderer} */ (spriteRenderer._active);
-  if (!renderer?.image?.complete || renderer.image.naturalWidth === 0) {
+  const source = renderer?.image;
+  if (!source || !isSpriteSourceReady(source)) {
     shapeRenderers.circle(ctx, x, y, radius, color, alpha);
     return;
   }
 
-  const img = renderer.image;
   const size = radius * 3;
   ctx.globalAlpha = alpha;
-  ctx.drawImage(img, x - size * 0.5, y - size * 0.5, size, size);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(source, x - size * 0.5, y - size * 0.5, size, size);
+  ctx.imageSmoothingEnabled = true;
+}
+
+/**
+ * @param {SpriteSource} source
+ * @returns {boolean}
+ */
+function isSpriteSourceReady(source) {
+  if (source instanceof HTMLCanvasElement) {
+    return source.width > 0 && source.height > 0;
+  }
+  return source.complete && source.naturalWidth > 0;
 }
 
 /** @type {AssetDrawFn & { _active?: AssetRenderer }} */
@@ -88,11 +103,16 @@ const rendererCache = new Map();
 
 /**
  * @param {AssetType} type
- * @param {HTMLImageElement | null} [image]
+ * @param {SpriteSource | null} [image]
  * @returns {AssetRenderer}
  */
 export function getAssetRenderer(type, image = null) {
-  const cacheKey = type === ASSET_TYPES.sprite && image ? `sprite:${image.src}` : type;
+  const cacheKey =
+    type === ASSET_TYPES.sprite && image
+      ? image instanceof HTMLCanvasElement
+        ? 'sprite:designer'
+        : `sprite:${image.src}`
+      : type;
   const cached = rendererCache.get(/** @type {AssetType} */ (cacheKey));
   if (cached && (type !== ASSET_TYPES.sprite || cached.image === image)) return cached;
 
@@ -112,6 +132,15 @@ export function getAssetRenderer(type, image = null) {
 
   rendererCache.set(/** @type {AssetType} */ (cacheKey), renderer);
   return renderer;
+}
+
+/**
+ * Use a compiled canvas from the Sprite Designer as the active sprite source.
+ * @param {HTMLCanvasElement} canvas
+ * @returns {AssetRenderer}
+ */
+export function setDesignerSprite(canvas) {
+  return getAssetRenderer(ASSET_TYPES.sprite, canvas);
 }
 
 /**
