@@ -7,7 +7,7 @@ import { initSpriteDesigner } from './spriteDesigner.js';
 
 /** @typedef {'burst' | 'stream' | 'edge-rain'} EmitterStyle */
 
-/** @typedef {{ position: Vec2, velocity: Vec2, radius: number, color: string, age: number, lifespan: number }} Particle */
+/** @typedef {{ position: Vec2, velocity: Vec2, radius: number, color: string, age: number, lifespan: number, angle: number, angularVelocity: number }} Particle */
 
 /** @typedef {{ position: Vec2, mass: number, radius: number }} OrbitalAnchor */
 
@@ -80,6 +80,7 @@ const STYLE_PRESETS = [
  *   emitterStyle: EmitterStyle,
  *   palette: string[],
  *   assetType: import('./assetInjector.js').AssetType,
+ *   particleSpin: number,
  * }}
  */
 const emitterConfig = {
@@ -91,6 +92,16 @@ const emitterConfig = {
   emitterStyle: /** @type {EmitterStyle} */ ('burst'),
   palette: ['#6ee7ff', '#c084fc', '#f472b6', '#818cf8'],
   assetType: ASSET_TYPES.circle,
+  particleSpin: 3,
+};
+
+/**
+ * Live visual settings — trail persistence and size decay apply to all particles immediately.
+ * @type {{ trailOpacityDecay: number, sizeDecay: boolean }}
+ */
+const visualConfig = {
+  trailOpacityDecay: 0.35,
+  sizeDecay: false,
 };
 
 /**
@@ -217,6 +228,8 @@ function spawnParticle(canvasWidth, canvasHeight) {
     color: pickPaletteColor(),
     age: 0,
     lifespan: emitterConfig.lifespan,
+    angle: randomRange(0, Math.PI * 2),
+    angularVelocity: emitterConfig.particleSpin * (Math.random() < 0.5 ? -1 : 1),
   };
 
   particles.push(particle);
@@ -299,6 +312,7 @@ function updatePhysics(dt, canvasWidth, canvasHeight) {
     p.velocity.y += accel.y * dt;
     p.position.x += p.velocity.x * dt;
     p.position.y += p.velocity.y * dt;
+    p.angle += p.angularVelocity * dt;
     p.age += dt;
 
     const outOfBounds =
@@ -335,9 +349,13 @@ function scaleParticlePositions(scaleX, scaleY) {
 function clearParticles() {
   particles.length = 0;
   spawnAccumulator = 0;
+  ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 }
 
 // ── Render phase (reads physics state, never mutates it) ───────────────────────
+
+/** Canvas background RGB — matches --bg-base for trail fade overlay */
+const CANVAS_BG = { r: 13, g: 15, b: 20 };
 
 /**
  * @param {CanvasRenderingContext2D} ctx
@@ -345,7 +363,15 @@ function clearParticles() {
  * @param {number} height
  */
 function render(ctx, width, height) {
-  ctx.clearRect(0, 0, width, height);
+  const { r, g, b } = CANVAS_BG;
+  const decay = visualConfig.trailOpacityDecay;
+
+  if (decay >= 1) {
+    ctx.clearRect(0, 0, width, height);
+  } else {
+    ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${decay})`;
+    ctx.fillRect(0, 0, width, height);
+  }
 
   ctx.fillStyle = 'rgba(110, 231, 255, 0.04)';
   ctx.beginPath();
@@ -374,8 +400,11 @@ function render(ctx, width, height) {
 
   const drawAsset = activeAssetRenderer.draw;
   for (const p of particles) {
-    const alpha = Math.max(0, 1 - p.age / p.lifespan);
-    drawAsset(ctx, p.position.x, p.position.y, p.radius, p.color, alpha);
+    const lifeRatio = p.age / p.lifespan;
+    const alpha = Math.max(0, 1 - lifeRatio);
+    const sizeScale = visualConfig.sizeDecay ? Math.max(0, 1 - lifeRatio) : 1;
+    const drawRadius = p.radius * sizeScale;
+    drawAsset(ctx, p.position.x, p.position.y, drawRadius, p.color, alpha, p.angle);
   }
 
   ctx.globalAlpha = 1;
@@ -599,6 +628,13 @@ function initUI() {
   bindRange('particleSize', 'particleSizeValue', (v) => { emitterConfig.radius = v; });
   bindRange('gravityG', 'gravityGValue', (v) => { physicsConfig.G = v; });
   bindRange('lifespan', 'lifespanValue', (v) => { emitterConfig.lifespan = v; }, parseFloat);
+  bindRange('particleSpin', 'particleSpinValue', (v) => { emitterConfig.particleSpin = v; }, parseFloat);
+  bindRange('trailDecay', 'trailDecayValue', (v) => { visualConfig.trailOpacityDecay = v; }, parseFloat);
+
+  const sizeDecayCheckbox = /** @type {HTMLInputElement} */ (document.getElementById('sizeDecay'));
+  sizeDecayCheckbox.addEventListener('change', () => {
+    visualConfig.sizeDecay = sizeDecayCheckbox.checked;
+  });
 
   const styleRadios = document.querySelectorAll('input[name="emitterStyle"]');
   styleRadios.forEach((radio) => {
