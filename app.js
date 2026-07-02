@@ -1,20 +1,84 @@
+import { ASSET_TYPES, getAssetRenderer } from './assetInjector.js';
+
 // ── Declarative configuration ────────────────────────────────────────────────
 
 /** @typedef {{ x: number, y: number }} Vec2 */
+
+/** @typedef {'burst' | 'stream' | 'edge-rain'} EmitterStyle */
 
 /** @typedef {{ position: Vec2, velocity: Vec2, radius: number, color: string, age: number, lifespan: number }} Particle */
 
 /** @typedef {{ position: Vec2, mass: number, radius: number }} OrbitalAnchor */
 
+/** @typedef {{
+ *   id: string,
+ *   name: string,
+ *   spawnRate: number,
+ *   speedMin: number,
+ *   speedMax: number,
+ *   radius: number,
+ *   lifespan: number,
+ *   emitterStyle: EmitterStyle,
+ *   palette: string[],
+ *   assetType: import('./assetInjector.js').AssetType,
+ *   gravityG: number,
+ * }} StylePreset */
+
+/** @type {StylePreset[]} */
+const STYLE_PRESETS = [
+  {
+    id: 'neon-galaxy',
+    name: 'Neon Galaxy',
+    spawnRate: 14,
+    speedMin: 50,
+    speedMax: 140,
+    radius: 3.5,
+    lifespan: 5,
+    emitterStyle: 'burst',
+    palette: ['#6ee7ff', '#c084fc', '#f472b6', '#818cf8'],
+    assetType: ASSET_TYPES.circle,
+    gravityG: 600,
+  },
+  {
+    id: 'volcanic-inversion',
+    name: 'Volcanic Inversion',
+    spawnRate: 18,
+    speedMin: 30,
+    speedMax: 100,
+    radius: 4,
+    lifespan: 3,
+    emitterStyle: 'stream',
+    palette: ['#ff6b35', '#f7931e', '#ffd166', '#ef4444'],
+    assetType: ASSET_TYPES.square,
+    gravityG: 800,
+  },
+  {
+    id: 'retro-pixel-sparkles',
+    name: 'Retro Pixel Sparkles',
+    spawnRate: 24,
+    speedMin: 60,
+    speedMax: 180,
+    radius: 2.5,
+    lifespan: 2.5,
+    emitterStyle: 'edge-rain',
+    palette: ['#22c55e', '#eab308', '#06b6d4', '#ec4899'],
+    assetType: ASSET_TYPES.pixel,
+    gravityG: 400,
+  },
+];
+
 /**
- * Emitter spawns particles at the canvas center with randomized initial velocities.
+ * Live emitter + visual settings — sidebar controls write here;
+ * only newly spawned particles read these values.
  * @type {{
  *   spawnRate: number,
  *   speedMin: number,
  *   speedMax: number,
  *   radius: number,
- *   color: string,
  *   lifespan: number,
+ *   emitterStyle: EmitterStyle,
+ *   palette: string[],
+ *   assetType: import('./assetInjector.js').AssetType,
  * }}
  */
 const emitterConfig = {
@@ -22,8 +86,10 @@ const emitterConfig = {
   speedMin: 40,
   speedMax: 120,
   radius: 3,
-  color: '#6ee7ff',
   lifespan: 4,
+  emitterStyle: /** @type {EmitterStyle} */ ('burst'),
+  palette: ['#6ee7ff', '#c084fc', '#f472b6', '#818cf8'],
+  assetType: ASSET_TYPES.circle,
 };
 
 /**
@@ -35,7 +101,7 @@ const physicsConfig = {
   G: 500,
   softening: 10,
   maxForce: 12000,
-  maxParticles: 2000,
+  maxParticles: 3000,
 };
 
 /** Visual + mass defaults for user-placed gravitational nodes */
@@ -57,6 +123,9 @@ const anchors = [];
 /** Accumulated spawn timer in seconds */
 let spawnAccumulator = 0;
 
+/** Active asset renderer — swapped via sidebar or preset */
+let activeAssetRenderer = getAssetRenderer(ASSET_TYPES.circle);
+
 /** Unit mass for emitter particles (m₁ in F = G·m₁·m₂/r²) */
 const PARTICLE_MASS = 1;
 
@@ -70,25 +139,81 @@ function randomRange(min, max) {
 }
 
 /**
- * Spawn one particle at the given center with a random direction and speed.
- * @param {number} centerX
- * @param {number} centerY
+ * Pick a random color from the active palette.
+ * @returns {string}
  */
-function spawnParticle(centerX, centerY) {
+function pickPaletteColor() {
+  const { palette } = emitterConfig;
+  if (palette.length === 0) return '#ffffff';
+  return palette[Math.floor(Math.random() * palette.length)];
+}
+
+/**
+ * Compute spawn position + velocity based on emitter style.
+ * @param {EmitterStyle} style
+ * @param {number} canvasWidth
+ * @param {number} canvasHeight
+ * @returns {{ x: number, y: number, vx: number, vy: number }}
+ */
+function computeSpawnParams(style, canvasWidth, canvasHeight) {
+  const centerX = canvasWidth * 0.5;
+  const centerY = canvasHeight * 0.5;
+  const speed = randomRange(emitterConfig.speedMin, emitterConfig.speedMax);
+
+  switch (style) {
+    case 'stream': {
+      const y = centerY + randomRange(-canvasHeight * 0.15, canvasHeight * 0.15);
+      const angle = randomRange(-0.35, 0.35);
+      return {
+        x: canvasWidth * 0.08,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+      };
+    }
+    case 'edge-rain': {
+      const x = randomRange(0, canvasWidth);
+      const angle = randomRange(Math.PI * 0.35, Math.PI * 0.65);
+      return {
+        x,
+        y: -emitterConfig.radius,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+      };
+    }
+    case 'burst':
+    default: {
+      const angle = randomRange(0, Math.PI * 2);
+      return {
+        x: centerX,
+        y: centerY,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+      };
+    }
+  }
+}
+
+/**
+ * Spawn one particle using the current emitter config.
+ * @param {number} canvasWidth
+ * @param {number} canvasHeight
+ */
+function spawnParticle(canvasWidth, canvasHeight) {
   if (particles.length >= physicsConfig.maxParticles) return;
 
-  const angle = randomRange(0, Math.PI * 2);
-  const speed = randomRange(emitterConfig.speedMin, emitterConfig.speedMax);
+  const { x, y, vx, vy } = computeSpawnParams(
+    emitterConfig.emitterStyle,
+    canvasWidth,
+    canvasHeight,
+  );
 
   /** @type {Particle} */
   const particle = {
-    position: { x: centerX, y: centerY },
-    velocity: {
-      x: Math.cos(angle) * speed,
-      y: Math.sin(angle) * speed,
-    },
+    position: { x, y },
+    velocity: { x: vx, y: vy },
     radius: emitterConfig.radius,
-    color: emitterConfig.color,
+    color: pickPaletteColor(),
     age: 0,
     lifespan: emitterConfig.lifespan,
   };
@@ -157,14 +282,11 @@ function clearAnchors() {
  * @param {number} canvasHeight
  */
 function updatePhysics(dt, canvasWidth, canvasHeight) {
-  const centerX = canvasWidth * 0.5;
-  const centerY = canvasHeight * 0.5;
-
   spawnAccumulator += dt;
   const spawnInterval = 1 / emitterConfig.spawnRate;
 
   while (spawnAccumulator >= spawnInterval) {
-    spawnParticle(centerX, centerY);
+    spawnParticle(canvasWidth, canvasHeight);
     spawnAccumulator -= spawnInterval;
   }
 
@@ -249,13 +371,10 @@ function render(ctx, width, height) {
     ctx.fill();
   }
 
+  const drawAsset = activeAssetRenderer.draw;
   for (const p of particles) {
     const alpha = Math.max(0, 1 - p.age / p.lifespan);
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = p.color;
-    ctx.beginPath();
-    ctx.arc(p.position.x, p.position.y, p.radius, 0, Math.PI * 2);
-    ctx.fill();
+    drawAsset(ctx, p.position.x, p.position.y, p.radius, p.color, alpha);
   }
 
   ctx.globalAlpha = 1;
@@ -353,7 +472,91 @@ function bindRange(inputId, outputId, onChange, parse = Number) {
   apply();
 }
 
+/**
+ * Sync sidebar inputs to reflect current config without firing change handlers.
+ * @param {StylePreset} preset
+ */
+function syncSidebarToConfig(preset) {
+  const setRange = (id, value) => {
+    const el = /** @type {HTMLInputElement} */ (document.getElementById(id));
+    el.value = String(value);
+    el.dispatchEvent(new Event('input'));
+  };
+
+  setRange('spawnRate', preset.spawnRate);
+  setRange('speedMin', preset.speedMin);
+  setRange('speedMax', preset.speedMax);
+  setRange('particleSize', preset.radius);
+  setRange('lifespan', preset.lifespan);
+  setRange('gravityG', preset.gravityG);
+
+  const styleInput = /** @type {HTMLInputElement | null} */ (
+    document.querySelector(`input[name="emitterStyle"][value="${preset.emitterStyle}"]`)
+  );
+  if (styleInput) styleInput.checked = true;
+
+  const assetInput = /** @type {HTMLSelectElement} */ (document.getElementById('assetType'));
+  assetInput.value = preset.assetType;
+
+  syncPaletteInputs(preset.palette);
+}
+
+/**
+ * @param {string[]} colors
+ */
+function syncPaletteInputs(colors) {
+  for (let i = 0; i < 4; i++) {
+    const input = /** @type {HTMLInputElement} */ (document.getElementById(`palette${i}`));
+    input.value = colors[i] ?? '#ffffff';
+  }
+  emitterConfig.palette = [...colors];
+  updatePalettePreview();
+}
+
+function updatePalettePreview() {
+  const preview = document.getElementById('palettePreview');
+  if (!preview) return;
+  preview.innerHTML = '';
+  for (const color of emitterConfig.palette) {
+    const swatch = document.createElement('span');
+    swatch.className = 'palette-preview__swatch';
+    swatch.style.background = color;
+    preview.appendChild(swatch);
+  }
+}
+
+/**
+ * Apply a full style preset to live config + sidebar.
+ * @param {string} presetId
+ */
+function applyPreset(presetId) {
+  const preset = STYLE_PRESETS.find((p) => p.id === presetId);
+  if (!preset) return;
+
+  emitterConfig.spawnRate = preset.spawnRate;
+  emitterConfig.speedMin = preset.speedMin;
+  emitterConfig.speedMax = preset.speedMax;
+  emitterConfig.radius = preset.radius;
+  emitterConfig.lifespan = preset.lifespan;
+  emitterConfig.emitterStyle = preset.emitterStyle;
+  emitterConfig.palette = [...preset.palette];
+  emitterConfig.assetType = preset.assetType;
+  physicsConfig.G = preset.gravityG;
+  activeAssetRenderer = getAssetRenderer(preset.assetType);
+
+  syncSidebarToConfig(preset);
+}
+
 function initUI() {
+  const presetSelect = /** @type {HTMLSelectElement} */ (document.getElementById('stylePreset'));
+  for (const preset of STYLE_PRESETS) {
+    const option = document.createElement('option');
+    option.value = preset.id;
+    option.textContent = preset.name;
+    presetSelect.appendChild(option);
+  }
+  presetSelect.addEventListener('change', () => applyPreset(presetSelect.value));
+
   bindRange('spawnRate', 'spawnRateValue', (v) => { emitterConfig.spawnRate = v; });
   bindRange('speedMin', 'speedMinValue', (v) => {
     emitterConfig.speedMin = v;
@@ -367,10 +570,28 @@ function initUI() {
   bindRange('gravityG', 'gravityGValue', (v) => { physicsConfig.G = v; });
   bindRange('lifespan', 'lifespanValue', (v) => { emitterConfig.lifespan = v; }, parseFloat);
 
-  const colorInput = /** @type {HTMLInputElement} */ (document.getElementById('particleColor'));
-  colorInput.addEventListener('input', () => {
-    emitterConfig.color = colorInput.value;
+  const styleRadios = document.querySelectorAll('input[name="emitterStyle"]');
+  styleRadios.forEach((radio) => {
+    radio.addEventListener('change', () => {
+      if (/** @type {HTMLInputElement} */ (radio).checked) {
+        emitterConfig.emitterStyle = /** @type {EmitterStyle} */ (/** @type {HTMLInputElement} */ (radio).value);
+      }
+    });
   });
+
+  const assetSelect = /** @type {HTMLSelectElement} */ (document.getElementById('assetType'));
+  assetSelect.addEventListener('change', () => {
+    emitterConfig.assetType = /** @type {import('./assetInjector.js').AssetType} */ (assetSelect.value);
+    activeAssetRenderer = getAssetRenderer(emitterConfig.assetType);
+  });
+
+  for (let i = 0; i < 4; i++) {
+    const input = /** @type {HTMLInputElement} */ (document.getElementById(`palette${i}`));
+    input.addEventListener('input', () => {
+      emitterConfig.palette[i] = input.value;
+      updatePalettePreview();
+    });
+  }
 
   document.getElementById('clearBtn').addEventListener('click', clearParticles);
   document.getElementById('clearAnchorsBtn').addEventListener('click', clearAnchors);
@@ -379,6 +600,8 @@ function initUI() {
     const rect = canvas.getBoundingClientRect();
     addOrbitalAnchor(event.clientX - rect.left, event.clientY - rect.top);
   });
+
+  syncPaletteInputs(emitterConfig.palette);
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
