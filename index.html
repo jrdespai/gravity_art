@@ -10,16 +10,100 @@
   <aside class="sidebar">
     <header class="sidebar__header">
       <h1 class="sidebar__title">Gravity Art</h1>
-      <p class="sidebar__subtitle">Particle sandbox</p>
+      <p class="sidebar__subtitle">Experiment lab</p>
     </header>
 
     <section class="sidebar__section">
-      <h2 class="sidebar__section-title">Emitter</h2>
+      <h2 class="sidebar__section-title">Style Preset</h2>
+
+      <label class="control">
+        <span class="control__label">Choose a look</span>
+        <select id="stylePreset" class="control__select">
+          <option value="" disabled selected>Pick a preset…</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="sidebar__section">
+      <h2 class="sidebar__section-title">Particles</h2>
 
       <label class="control">
         <span class="control__label">Spawn rate <output id="spawnRateValue">8</output>/s</span>
-        <input type="range" id="spawnRate" min="1" max="30" value="8" step="1">
+        <input type="range" id="spawnRate" min="1" max="60" value="8" step="1">
       </label>
+
+      <label class="control">
+        <span class="control__label">Lifespan <output id="lifespanValue">4.0</output>s</span>
+        <input type="range" id="lifespan" min="0.5" max="30" value="4" step="0.5">
+      </label>
+
+      <label class="control">
+        <span class="control__label">Particle size <output id="particleSizeValue">3</output>px</span>
+        <input type="range" id="particleSize" min="1" max="8" value="3" step="0.5">
+      </label>
+
+      <fieldset class="control control--fieldset">
+        <legend class="control__label">Emitter style</legend>
+        <div class="radio-group">
+          <label class="radio-option">
+            <input type="radio" name="emitterStyle" value="burst" checked>
+            <span>Single Point Burst</span>
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="emitterStyle" value="stream">
+            <span>Stream</span>
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="emitterStyle" value="edge-rain">
+            <span>Edge Rain</span>
+          </label>
+        </div>
+      </fieldset>
+    </section>
+
+    <section class="sidebar__section">
+      <h2 class="sidebar__section-title">Color Palette</h2>
+
+      <div class="palette-preview" id="palettePreview" aria-hidden="true"></div>
+
+      <div class="palette-grid">
+        <label class="control control--palette">
+          <span class="control__label">Color 1</span>
+          <input type="color" id="palette0" value="#6ee7ff">
+        </label>
+        <label class="control control--palette">
+          <span class="control__label">Color 2</span>
+          <input type="color" id="palette1" value="#c084fc">
+        </label>
+        <label class="control control--palette">
+          <span class="control__label">Color 3</span>
+          <input type="color" id="palette2" value="#f472b6">
+        </label>
+        <label class="control control--palette">
+          <span class="control__label">Color 4</span>
+          <input type="color" id="palette3" value="#818cf8">
+        </label>
+      </div>
+    </section>
+
+    <section class="sidebar__section">
+      <h2 class="sidebar__section-title">Particle Shape</h2>
+
+      <label class="control">
+        <span class="control__label">Asset type</span>
+        <select id="assetType" class="control__select">
+          <option value="circle">Circle (default)</option>
+          <option value="square">Square</option>
+          <option value="star">Star</option>
+          <option value="pixel">Retro Pixel</option>
+          <option value="sprite">Custom Sprite</option>
+        </select>
+      </label>
+      <p class="sidebar__hint">Swap shapes here — plug in custom sprite images via the Asset Injector module.</p>
+    </section>
+
+    <section class="sidebar__section">
+      <h2 class="sidebar__section-title">Motion &amp; Gravity</h2>
 
       <label class="control">
         <span class="control__label">Speed min <output id="speedMinValue">40</output></span>
@@ -31,30 +115,11 @@
         <input type="range" id="speedMax" min="20" max="400" value="120" step="5">
       </label>
 
-      <label class="control">
-        <span class="control__label">Particle size <output id="particleSizeValue">3</output>px</span>
-        <input type="range" id="particleSize" min="1" max="8" value="3" step="0.5">
-      </label>
-
-      <label class="control">
-        <span class="control__label">Color</span>
-        <input type="color" id="particleColor" value="#6ee7ff">
-      </label>
-    </section>
-
-    <section class="sidebar__section">
-      <h2 class="sidebar__section-title">Gravity</h2>
-
       <p class="sidebar__hint">Click the canvas to place orbital anchors.</p>
 
       <label class="control">
         <span class="control__label">Gravity strength (G) <output id="gravityGValue">500</output></span>
         <input type="range" id="gravityG" min="0" max="2000" value="500" step="25">
-      </label>
-
-      <label class="control">
-        <span class="control__label">Lifespan <output id="lifespanValue">4.0</output>s</span>
-        <input type="range" id="lifespan" min="1" max="10" value="4" step="0.5">
       </label>
     </section>
 
