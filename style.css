@@ -79,11 +79,20 @@ body {
   color: var(--text-secondary);
 }
 
+.sidebar__hint {
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
 .sidebar__stats {
   margin-top: auto;
 }
 
 .sidebar__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
   padding-top: 0.5rem;
 }
 
@@ -202,6 +211,10 @@ input[type="color"] {
   transform: scale(0.98);
 }
 
+.btn--secondary {
+  color: var(--text-secondary);
+}
+
 /* ── Canvas stage ────────────────────────────────────────── */
 
 .stage {
@@ -215,4 +228,5 @@ input[type="color"] {
   display: block;
   width: 100%;
   height: 100%;
+  cursor: crosshair;
 }

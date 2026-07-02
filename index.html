@@ -43,11 +43,13 @@
     </section>
 
     <section class="sidebar__section">
-      <h2 class="sidebar__section-title">Physics</h2>
+      <h2 class="sidebar__section-title">Gravity</h2>
+
+      <p class="sidebar__hint">Click the canvas to place orbital anchors.</p>
 
       <label class="control">
-        <span class="control__label">Gravity <output id="gravityValue">80</output></span>
-        <input type="range" id="gravity" min="0" max="400" value="80" step="10">
+        <span class="control__label">Gravity strength (G) <output id="gravityGValue">500</output></span>
+        <input type="range" id="gravityG" min="0" max="2000" value="500" step="25">
       </label>
 
       <label class="control">
@@ -64,6 +66,10 @@
           <dd id="particleCount">0</dd>
         </div>
         <div class="stats__row">
+          <dt>Anchors</dt>
+          <dd id="anchorCount">0</dd>
+        </div>
+        <div class="stats__row">
           <dt>FPS</dt>
           <dd id="fps">—</dd>
         </div>
@@ -71,7 +77,8 @@
     </section>
 
     <footer class="sidebar__footer">
-      <button type="button" id="clearBtn" class="btn">Clear particles</button>
+      <button type="button" id="clearAnchorsBtn" class="btn">Clear all anchors</button>
+      <button type="button" id="clearBtn" class="btn btn--secondary">Clear particles</button>
     </footer>
   </aside>
 
