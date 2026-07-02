@@ -9,7 +9,9 @@ import { initSpriteDesigner } from './spriteDesigner.js';
 
 /** @typedef {{ position: Vec2, velocity: Vec2, radius: number, color: string, age: number, lifespan: number, angle: number, angularVelocity: number }} Particle */
 
-/** @typedef {{ position: Vec2, mass: number, radius: number }} OrbitalAnchor */
+/** @typedef {'attractive' | 'repulsive'} AnchorMode */
+
+/** @typedef {{ position: Vec2, mass: number, radius: number, mode: AnchorMode, baseMass: number, baseRadius: number }} OrbitalAnchor */
 
 /** @typedef {{
  *   id: string,
@@ -120,8 +122,26 @@ const physicsConfig = {
 const anchorConfig = {
   mass: 800,
   radius: 14,
-  color: '#ffd166',
-  glowColor: 'rgba(255, 209, 102, 0.25)',
+  massScaleMin: 0.35,
+  massScaleMax: 3.5,
+  /** Scroll-wheel mass adjustment per notch (normalized scale delta) */
+  massScrollStep: 0.08,
+};
+
+/** Per-mode anchor appearance — attractive pulls (blue/green), repulsive pushes (red/pink) */
+const ANCHOR_APPEARANCE = {
+  attractive: {
+    color: '#4ade80',
+    glowColor: 'rgba(74, 222, 128, 0.28)',
+    fieldRgb: '74, 222, 128',
+    highlight: '#6ee7ff',
+  },
+  repulsive: {
+    color: '#f472b6',
+    glowColor: 'rgba(244, 114, 182, 0.28)',
+    fieldRgb: '244, 114, 182',
+    highlight: '#ef4444',
+  },
 };
 
 // ── Physics engine state (decoupled from rendering) ──────────────────────────
@@ -138,8 +158,108 @@ let spawnAccumulator = 0;
 /** Active asset renderer — swapped via sidebar or preset */
 let activeAssetRenderer = getAssetRenderer(ASSET_TYPES.circle);
 
+/** Elapsed simulation time in seconds — drives field-line ripple animation */
+let simTime = 0;
+
+/** Index of the anchor selected for mass scroll / visual indicator (-1 = none) */
+let selectedAnchorIndex = -1;
+
+/** Pointer interaction state for drag, spawn, and double-click toggle */
+const pointerState = {
+  activePointerId: null,
+  downAnchorIndex: -1,
+  dragOffset: /** @type {Vec2} */ ({ x: 0, y: 0 }),
+  downCanvasPos: /** @type {Vec2} */ ({ x: 0, y: 0 }),
+  hasMoved: false,
+  lastClickAnchorIndex: -1,
+  lastClickTime: 0,
+};
+
+const DRAG_THRESHOLD_PX = 6;
+const DOUBLE_CLICK_MS = 350;
+
 /** Unit mass for emitter particles (m₁ in F = G·m₁·m₂/r²) */
 const PARTICLE_MASS = 1;
+
+/**
+ * @param {AnchorMode} mode
+ * @returns {{ color: string, glowColor: string, fieldRgb: string, highlight: string }}
+ */
+function getAnchorAppearance(mode) {
+  return ANCHOR_APPEARANCE[mode];
+}
+
+/**
+ * Normalized mass scale relative to anchorConfig defaults.
+ * @param {OrbitalAnchor} anchor
+ * @returns {number}
+ */
+function getAnchorMassScale(anchor) {
+  return anchor.mass / anchor.baseMass;
+}
+
+/**
+ * Apply a normalized mass scale — radius grows proportionally so strength ∝ mass.
+ * @param {OrbitalAnchor} anchor
+ * @param {number} scale
+ */
+function setAnchorMassScale(anchor, scale) {
+  const clamped = Math.max(anchorConfig.massScaleMin, Math.min(anchorConfig.massScaleMax, scale));
+  anchor.mass = anchor.baseMass * clamped;
+  anchor.radius = anchor.baseRadius * clamped;
+}
+
+/**
+ * Find topmost anchor under canvas coordinates (CSS pixels).
+ * @param {number} x
+ * @param {number} y
+ * @returns {number} anchor index or -1
+ */
+function hitTestAnchor(x, y) {
+  for (let i = anchors.length - 1; i >= 0; i--) {
+    const anchor = anchors[i];
+    const hitRadius = anchor.radius * 2.4;
+    if (Math.hypot(x - anchor.position.x, y - anchor.position.y) <= hitRadius) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * @param {PointerEvent} event
+ * @returns {Vec2}
+ */
+function pointerToCanvas(event) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+  };
+}
+
+/**
+ * Toggle attractive ↔ repulsive on double-click.
+ * @param {number} anchorIndex
+ */
+function toggleAnchorMode(anchorIndex) {
+  const anchor = anchors[anchorIndex];
+  if (!anchor) return;
+  anchor.mode = anchor.mode === 'attractive' ? 'repulsive' : 'attractive';
+}
+
+/**
+ * @param {number} anchorIndex
+ * @param {number} deltaY - wheel delta (positive = scroll down)
+ */
+function adjustAnchorMass(anchorIndex, deltaY) {
+  const anchor = anchors[anchorIndex];
+  if (!anchor) return;
+
+  const direction = deltaY > 0 ? -1 : 1;
+  const currentScale = getAnchorMassScale(anchor);
+  setAnchorMassScale(anchor, currentScale + direction * anchorConfig.massScrollStep);
+}
 
 /**
  * @param {number} min
@@ -258,15 +378,16 @@ function computeAnchorAcceleration(particle) {
     const rEff = Math.max(r, softening);
     const rEffSq = rEff * rEff;
 
-    // F = G · (m₁ · m₂) / r²  →  |F| clamped, direction toward anchor
+    // F = G · (m₁ · m₂) / r²  →  |F| clamped; sign flips for repulsive anchors
     let forceMag = (G * PARTICLE_MASS * anchor.mass) / rEffSq;
     forceMag = Math.min(forceMag, maxForce);
 
+    const sign = anchor.mode === 'repulsive' ? -1 : 1;
     const dirX = dx / r;
     const dirY = dy / r;
 
-    ax += (dirX * forceMag) / PARTICLE_MASS;
-    ay += (dirY * forceMag) / PARTICLE_MASS;
+    ax += sign * (dirX * forceMag) / PARTICLE_MASS;
+    ay += sign * (dirY * forceMag) / PARTICLE_MASS;
   }
 
   return { x: ax, y: ay };
@@ -281,11 +402,16 @@ function addOrbitalAnchor(x, y) {
     position: { x, y },
     mass: anchorConfig.mass,
     radius: anchorConfig.radius,
+    mode: 'attractive',
+    baseMass: anchorConfig.mass,
+    baseRadius: anchorConfig.radius,
   });
+  selectedAnchorIndex = anchors.length - 1;
 }
 
 function clearAnchors() {
   anchors.length = 0;
+  selectedAnchorIndex = -1;
 }
 
 /**
@@ -358,6 +484,105 @@ function clearParticles() {
 const CANVAS_BG = { r: 13, g: 15, b: 20 };
 
 /**
+ * Subtle concentric ripples — visualizes the gravitational warp field for kids.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {OrbitalAnchor} anchor
+ * @param {number} time
+ */
+function drawFieldLines(ctx, anchor, time) {
+  const { x, y } = anchor.position;
+  const appearance = getAnchorAppearance(anchor.mode);
+  const ringCount = 5;
+  const spacing = anchor.radius * 1.6;
+  const pulseSpeed = anchor.mode === 'repulsive' ? 0.55 : 0.4;
+
+  ctx.save();
+  ctx.lineWidth = 1;
+
+  for (let i = 0; i < ringCount; i++) {
+    const phase = (time * pulseSpeed + i * 0.22) % 1;
+    const radius = anchor.radius * 1.8 + spacing * (i + 0.35 + phase);
+    const alpha = 0.14 * (1 - i / ringCount) * (0.65 + 0.35 * Math.sin(time * 2 + i));
+    ctx.strokeStyle = `rgba(${appearance.fieldRgb}, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+/**
+ * Tiny mass scale bar beside a selected anchor (scroll wheel hint).
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {OrbitalAnchor} anchor
+ */
+function drawMassIndicator(ctx, anchor) {
+  const scale = getAnchorMassScale(anchor);
+  const normalized =
+    (scale - anchorConfig.massScaleMin) / (anchorConfig.massScaleMax - anchorConfig.massScaleMin);
+  const barHeight = anchor.radius * 2.4;
+  const barWidth = 4;
+  const gap = anchor.radius + 10;
+  const barX = anchor.position.x + gap;
+  const barY = anchor.position.y - barHeight * 0.5;
+  const fillHeight = barHeight * normalized;
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+  ctx.fillRect(barX, barY, barWidth, barHeight);
+
+  const appearance = getAnchorAppearance(anchor.mode);
+  ctx.fillStyle = appearance.highlight;
+  ctx.fillRect(barX, barY + barHeight - fillHeight, barWidth, fillHeight);
+
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(barX + 0.5, barY + 0.5, barWidth - 1, barHeight - 1);
+  ctx.restore();
+}
+
+/**
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {OrbitalAnchor} anchor
+ * @param {boolean} isSelected
+ */
+function drawAnchor(ctx, anchor, isSelected) {
+  const { x, y } = anchor.position;
+  const appearance = getAnchorAppearance(anchor.mode);
+  const glowRadius = anchor.radius * 2.2;
+
+  drawFieldLines(ctx, anchor, simTime);
+
+  ctx.fillStyle = appearance.glowColor;
+  ctx.beginPath();
+  ctx.arc(x, y, glowRadius, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (isSelected) {
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, anchor.radius + 4, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = appearance.color;
+  ctx.beginPath();
+  ctx.arc(x, y, anchor.radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = appearance.highlight;
+  ctx.beginPath();
+  ctx.arc(x - anchor.radius * 0.25, y - anchor.radius * 0.25, anchor.radius * 0.22, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (isSelected) {
+    drawMassIndicator(ctx, anchor);
+  }
+}
+
+/**
  * @param {CanvasRenderingContext2D} ctx
  * @param {number} width
  * @param {number} height
@@ -378,24 +603,8 @@ function render(ctx, width, height) {
   ctx.arc(width * 0.5, height * 0.5, 6, 0, Math.PI * 2);
   ctx.fill();
 
-  for (const anchor of anchors) {
-    const { x, y } = anchor.position;
-    const glowRadius = anchor.radius * 2.2;
-
-    ctx.fillStyle = anchorConfig.glowColor;
-    ctx.beginPath();
-    ctx.arc(x, y, glowRadius, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = anchorConfig.color;
-    ctx.beginPath();
-    ctx.arc(x, y, anchor.radius, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-    ctx.beginPath();
-    ctx.arc(x - anchor.radius * 0.25, y - anchor.radius * 0.25, anchor.radius * 0.22, 0, Math.PI * 2);
-    ctx.fill();
+  for (let i = 0; i < anchors.length; i++) {
+    drawAnchor(ctx, anchors[i], i === selectedAnchorIndex);
   }
 
   const drawAsset = activeAssetRenderer.draw;
@@ -462,6 +671,7 @@ function loop(timestamp) {
   lastTimestamp = timestamp;
   const dt = Math.min(rawDt, MAX_DELTA);
 
+  simTime += dt;
   updatePhysics(dt, canvasWidth, canvasHeight);
   render(ctx, canvasWidth, canvasHeight);
 
@@ -662,10 +872,7 @@ function initUI() {
   document.getElementById('clearBtn').addEventListener('click', clearParticles);
   document.getElementById('clearAnchorsBtn').addEventListener('click', clearAnchors);
 
-  canvas.addEventListener('click', (event) => {
-    const rect = canvas.getBoundingClientRect();
-    addOrbitalAnchor(event.clientX - rect.left, event.clientY - rect.top);
-  });
+  initCanvasInteraction();
 
   syncPaletteInputs(emitterConfig.palette);
 
@@ -678,6 +885,119 @@ function initUI() {
       assetSelect.value = ASSET_TYPES.sprite;
     },
   });
+}
+
+// ── Canvas pointer interaction (drag, spawn, toggle, mass scroll) ─────────────
+
+/**
+ * @param {number} x
+ * @param {number} y
+ */
+function updateCanvasCursor(x, y) {
+  if (pointerState.activePointerId !== null) {
+    canvas.style.cursor = pointerState.downAnchorIndex >= 0 ? 'grabbing' : 'crosshair';
+    return;
+  }
+
+  canvas.style.cursor = hitTestAnchor(x, y) >= 0 ? 'grab' : 'crosshair';
+}
+
+function initCanvasInteraction() {
+  canvas.addEventListener('pointerdown', (event) => {
+    if (pointerState.activePointerId !== null) return;
+
+    const pos = pointerToCanvas(event);
+    const anchorIndex = hitTestAnchor(pos.x, pos.y);
+
+    pointerState.activePointerId = event.pointerId;
+    pointerState.downAnchorIndex = anchorIndex;
+    pointerState.downCanvasPos = pos;
+    pointerState.hasMoved = false;
+
+    if (anchorIndex >= 0) {
+      selectedAnchorIndex = anchorIndex;
+      const anchor = anchors[anchorIndex];
+      pointerState.dragOffset = {
+        x: anchor.position.x - pos.x,
+        y: anchor.position.y - pos.y,
+      };
+      canvas.setPointerCapture(event.pointerId);
+    }
+
+    updateCanvasCursor(pos.x, pos.y);
+  });
+
+  canvas.addEventListener('pointermove', (event) => {
+    const pos = pointerToCanvas(event);
+
+    if (event.pointerId === pointerState.activePointerId && pointerState.downAnchorIndex >= 0) {
+      const moved = Math.hypot(
+        pos.x - pointerState.downCanvasPos.x,
+        pos.y - pointerState.downCanvasPos.y,
+      );
+
+      if (moved >= DRAG_THRESHOLD_PX) {
+        pointerState.hasMoved = true;
+      }
+
+      if (pointerState.hasMoved) {
+        const anchor = anchors[pointerState.downAnchorIndex];
+        anchor.position.x = pos.x + pointerState.dragOffset.x;
+        anchor.position.y = pos.y + pointerState.dragOffset.y;
+      }
+    }
+
+    updateCanvasCursor(pos.x, pos.y);
+  });
+
+  const finishPointer = (event) => {
+    if (event.pointerId !== pointerState.activePointerId) return;
+
+    const pos = pointerToCanvas(event);
+    const anchorIndex = pointerState.downAnchorIndex;
+    const now = performance.now();
+
+    if (anchorIndex >= 0 && !pointerState.hasMoved) {
+      const isDoubleClick =
+        pointerState.lastClickAnchorIndex === anchorIndex &&
+        now - pointerState.lastClickTime <= DOUBLE_CLICK_MS;
+
+      if (isDoubleClick) {
+        toggleAnchorMode(anchorIndex);
+        pointerState.lastClickAnchorIndex = -1;
+        pointerState.lastClickTime = 0;
+      } else {
+        pointerState.lastClickAnchorIndex = anchorIndex;
+        pointerState.lastClickTime = now;
+        selectedAnchorIndex = anchorIndex;
+      }
+    } else if (anchorIndex < 0 && !pointerState.hasMoved) {
+      addOrbitalAnchor(pos.x, pos.y);
+    }
+
+    if (canvas.hasPointerCapture(event.pointerId)) {
+      canvas.releasePointerCapture(event.pointerId);
+    }
+
+    pointerState.activePointerId = null;
+    pointerState.downAnchorIndex = -1;
+    pointerState.hasMoved = false;
+    updateCanvasCursor(pos.x, pos.y);
+  };
+
+  canvas.addEventListener('pointerup', finishPointer);
+  canvas.addEventListener('pointercancel', finishPointer);
+
+  canvas.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    const pos = pointerToCanvas(event);
+    const hoverIndex = hitTestAnchor(pos.x, pos.y);
+    const targetIndex = hoverIndex >= 0 ? hoverIndex : selectedAnchorIndex;
+    if (targetIndex < 0) return;
+
+    selectedAnchorIndex = targetIndex;
+    adjustAnchorMass(targetIndex, event.deltaY);
+  }, { passive: false });
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
