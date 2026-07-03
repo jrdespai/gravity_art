@@ -164,15 +164,26 @@ let simTime = 0;
 /** Index of the anchor selected for mass scroll / visual indicator (-1 = none) */
 let selectedAnchorIndex = -1;
 
-/** Pointer interaction state for drag, spawn, and double-click toggle */
+/** Pointer interaction state for drag, spawn, resize, and double-click toggle */
 const pointerState = {
   activePointerId: null,
+  mode: /** @type {'none' | 'move' | 'resize-bar' | 'pinch'} */ ('none'),
   downAnchorIndex: -1,
   dragOffset: /** @type {Vec2} */ ({ x: 0, y: 0 }),
   downCanvasPos: /** @type {Vec2} */ ({ x: 0, y: 0 }),
   hasMoved: false,
   lastClickAnchorIndex: -1,
   lastClickTime: 0,
+};
+
+/** Live pointer positions — enables two-finger pinch resize on touch devices */
+const activePointers = new Map();
+
+/** Pinch gesture baseline when two fingers rest on an anchor */
+const pinchState = {
+  anchorIndex: -1,
+  startDistance: 0,
+  startScale: 1,
 };
 
 const DRAG_THRESHOLD_PX = 6;
@@ -259,6 +270,141 @@ function adjustAnchorMass(anchorIndex, deltaY) {
   const direction = deltaY > 0 ? -1 : 1;
   const currentScale = getAnchorMassScale(anchor);
   setAnchorMassScale(anchor, currentScale + direction * anchorConfig.massScrollStep);
+}
+
+/**
+ * Layout for the mass scale bar beside a selected anchor.
+ * @param {OrbitalAnchor} anchor
+ * @returns {{ barX: number, barY: number, barWidth: number, barHeight: number, touchX: number, touchY: number, touchWidth: number, touchHeight: number, knobX: number, knobY: number, knobRadius: number }}
+ */
+function getMassIndicatorLayout(anchor) {
+  const barHeight = anchor.radius * 2.4;
+  const barWidth = 4;
+  const gap = anchor.radius + 10;
+  const barX = anchor.position.x + gap;
+  const barY = anchor.position.y - barHeight * 0.5;
+  const touchPadding = 14;
+  const normalized =
+    (getAnchorMassScale(anchor) - anchorConfig.massScaleMin) /
+    (anchorConfig.massScaleMax - anchorConfig.massScaleMin);
+  const knobRadius = 7;
+  const knobX = barX + barWidth * 0.5;
+  const knobY = barY + barHeight - normalized * barHeight;
+
+  return {
+    barX,
+    barY,
+    barWidth,
+    barHeight,
+    touchX: barX - touchPadding,
+    touchY: barY - touchPadding,
+    touchWidth: barWidth + touchPadding * 2,
+    touchHeight: barHeight + touchPadding * 2,
+    knobX,
+    knobY,
+    knobRadius,
+  };
+}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @returns {number} selected anchor index if mass bar hit, else -1
+ */
+function hitTestMassIndicator(x, y) {
+  if (selectedAnchorIndex < 0) return -1;
+
+  const anchor = anchors[selectedAnchorIndex];
+  if (!anchor) return -1;
+
+  const layout = getMassIndicatorLayout(anchor);
+  if (
+    x >= layout.touchX &&
+    x <= layout.touchX + layout.touchWidth &&
+    y >= layout.touchY &&
+    y <= layout.touchY + layout.touchHeight
+  ) {
+    return selectedAnchorIndex;
+  }
+
+  return -1;
+}
+
+/**
+ * Map a canvas Y coordinate on the mass bar to anchor mass scale.
+ * @param {number} anchorIndex
+ * @param {number} canvasY
+ */
+function setAnchorMassFromBarY(anchorIndex, canvasY) {
+  const anchor = anchors[anchorIndex];
+  if (!anchor) return;
+
+  const { barY, barHeight } = getMassIndicatorLayout(anchor);
+  const normalized = 1 - (canvasY - barY) / barHeight;
+  const scale =
+    anchorConfig.massScaleMin +
+    Math.max(0, Math.min(1, normalized)) * (anchorConfig.massScaleMax - anchorConfig.massScaleMin);
+  setAnchorMassScale(anchor, scale);
+}
+
+/**
+ * @param {number} anchorIndex
+ * @returns {Array<{ id: number, x: number, y: number }>}
+ */
+function getPointersNearAnchor(anchorIndex) {
+  const anchor = anchors[anchorIndex];
+  if (!anchor) return [];
+
+  const hitRadius = anchor.radius * 3.2;
+  const near = [];
+
+  for (const [id, pos] of activePointers) {
+    if (Math.hypot(pos.x - anchor.position.x, pos.y - anchor.position.y) <= hitRadius) {
+      near.push({ id, x: pos.x, y: pos.y });
+    }
+  }
+
+  return near;
+}
+
+/**
+ * Begin pinch-resize when two fingers land on the same anchor.
+ * @returns {boolean}
+ */
+function tryStartPinchResize() {
+  for (let i = anchors.length - 1; i >= 0; i--) {
+    const near = getPointersNearAnchor(i);
+    if (near.length < 2) continue;
+
+    const [a, b] = near;
+    pinchState.anchorIndex = i;
+    pinchState.startDistance = Math.hypot(b.x - a.x, b.y - a.y);
+    pinchState.startScale = getAnchorMassScale(anchors[i]);
+    pointerState.mode = 'pinch';
+    pointerState.downAnchorIndex = i;
+    pointerState.hasMoved = true;
+    selectedAnchorIndex = i;
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Apply live pinch distance to anchor mass.
+ */
+function updatePinchResize() {
+  if (pinchState.anchorIndex < 0) return;
+
+  const near = getPointersNearAnchor(pinchState.anchorIndex);
+  if (near.length < 2) return;
+
+  const [a, b] = near;
+  const currentDistance = Math.hypot(b.x - a.x, b.y - a.y);
+  if (pinchState.startDistance < 1e-3) return;
+
+  const ratio = currentDistance / pinchState.startDistance;
+  setAnchorMassScale(anchors[pinchState.anchorIndex], pinchState.startScale * ratio);
 }
 
 /**
@@ -513,7 +659,7 @@ function drawFieldLines(ctx, anchor, time) {
 }
 
 /**
- * Tiny mass scale bar beside a selected anchor (scroll wheel hint).
+ * Draggable mass scale bar beside a selected anchor (scroll wheel + touch drag).
  * @param {CanvasRenderingContext2D} ctx
  * @param {OrbitalAnchor} anchor
  */
@@ -521,24 +667,31 @@ function drawMassIndicator(ctx, anchor) {
   const scale = getAnchorMassScale(anchor);
   const normalized =
     (scale - anchorConfig.massScaleMin) / (anchorConfig.massScaleMax - anchorConfig.massScaleMin);
-  const barHeight = anchor.radius * 2.4;
-  const barWidth = 4;
-  const gap = anchor.radius + 10;
-  const barX = anchor.position.x + gap;
-  const barY = anchor.position.y - barHeight * 0.5;
-  const fillHeight = barHeight * normalized;
+  const layout = getMassIndicatorLayout(anchor);
+  const fillHeight = layout.barHeight * normalized;
 
   ctx.save();
+
   ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
-  ctx.fillRect(barX, barY, barWidth, barHeight);
+  ctx.fillRect(layout.barX, layout.barY, layout.barWidth, layout.barHeight);
 
   const appearance = getAnchorAppearance(anchor.mode);
   ctx.fillStyle = appearance.highlight;
-  ctx.fillRect(barX, barY + barHeight - fillHeight, barWidth, fillHeight);
+  ctx.fillRect(layout.barX, layout.barY + layout.barHeight - fillHeight, layout.barWidth, fillHeight);
 
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
   ctx.lineWidth = 1;
-  ctx.strokeRect(barX + 0.5, barY + 0.5, barWidth - 1, barHeight - 1);
+  ctx.strokeRect(layout.barX + 0.5, layout.barY + 0.5, layout.barWidth - 1, layout.barHeight - 1);
+
+  ctx.fillStyle = appearance.highlight;
+  ctx.beginPath();
+  ctx.arc(layout.knobX, layout.knobY, layout.knobRadius, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
   ctx.restore();
 }
 
@@ -895,32 +1048,69 @@ function initUI() {
  */
 function updateCanvasCursor(x, y) {
   if (pointerState.activePointerId !== null) {
-    canvas.style.cursor = pointerState.downAnchorIndex >= 0 ? 'grabbing' : 'crosshair';
+    if (pointerState.mode === 'resize-bar') {
+      canvas.style.cursor = 'ns-resize';
+    } else if (pointerState.mode === 'pinch') {
+      canvas.style.cursor = 'grab';
+    } else {
+      canvas.style.cursor = pointerState.downAnchorIndex >= 0 ? 'grabbing' : 'crosshair';
+    }
+    return;
+  }
+
+  if (hitTestMassIndicator(x, y) >= 0) {
+    canvas.style.cursor = 'ns-resize';
     return;
   }
 
   canvas.style.cursor = hitTestAnchor(x, y) >= 0 ? 'grab' : 'crosshair';
 }
 
+function resetPointerGesture() {
+  pointerState.activePointerId = null;
+  pointerState.mode = 'none';
+  pointerState.downAnchorIndex = -1;
+  pointerState.hasMoved = false;
+  pinchState.anchorIndex = -1;
+  pinchState.startDistance = 0;
+  pinchState.startScale = 1;
+}
+
 function initCanvasInteraction() {
   canvas.addEventListener('pointerdown', (event) => {
+    const pos = pointerToCanvas(event);
+    activePointers.set(event.pointerId, pos);
+
+    if (tryStartPinchResize()) {
+      if (pointerState.activePointerId !== null && canvas.hasPointerCapture(pointerState.activePointerId)) {
+        canvas.releasePointerCapture(pointerState.activePointerId);
+      }
+      pointerState.activePointerId = event.pointerId;
+      canvas.setPointerCapture(event.pointerId);
+      updateCanvasCursor(pos.x, pos.y);
+      return;
+    }
+
     if (pointerState.activePointerId !== null) return;
 
-    const pos = pointerToCanvas(event);
-    const anchorIndex = hitTestAnchor(pos.x, pos.y);
+    const massBarIndex = hitTestMassIndicator(pos.x, pos.y);
+    const anchorIndex = massBarIndex >= 0 ? massBarIndex : hitTestAnchor(pos.x, pos.y);
 
     pointerState.activePointerId = event.pointerId;
     pointerState.downAnchorIndex = anchorIndex;
     pointerState.downCanvasPos = pos;
     pointerState.hasMoved = false;
+    pointerState.mode = massBarIndex >= 0 ? 'resize-bar' : anchorIndex >= 0 ? 'move' : 'none';
 
     if (anchorIndex >= 0) {
       selectedAnchorIndex = anchorIndex;
-      const anchor = anchors[anchorIndex];
-      pointerState.dragOffset = {
-        x: anchor.position.x - pos.x,
-        y: anchor.position.y - pos.y,
-      };
+      if (pointerState.mode === 'move') {
+        const anchor = anchors[anchorIndex];
+        pointerState.dragOffset = {
+          x: anchor.position.x - pos.x,
+          y: anchor.position.y - pos.y,
+        };
+      }
       canvas.setPointerCapture(event.pointerId);
     }
 
@@ -929,8 +1119,33 @@ function initCanvasInteraction() {
 
   canvas.addEventListener('pointermove', (event) => {
     const pos = pointerToCanvas(event);
+    activePointers.set(event.pointerId, pos);
 
-    if (event.pointerId === pointerState.activePointerId && pointerState.downAnchorIndex >= 0) {
+    if (pointerState.mode === 'pinch') {
+      updatePinchResize();
+      updateCanvasCursor(pos.x, pos.y);
+      return;
+    }
+
+    if (activePointers.size >= 2 && tryStartPinchResize()) {
+      updatePinchResize();
+      updateCanvasCursor(pos.x, pos.y);
+      return;
+    }
+
+    if (event.pointerId !== pointerState.activePointerId) {
+      updateCanvasCursor(pos.x, pos.y);
+      return;
+    }
+
+    if (pointerState.mode === 'resize-bar' && pointerState.downAnchorIndex >= 0) {
+      pointerState.hasMoved = true;
+      setAnchorMassFromBarY(pointerState.downAnchorIndex, pos.y);
+      updateCanvasCursor(pos.x, pos.y);
+      return;
+    }
+
+    if (pointerState.mode === 'move' && pointerState.downAnchorIndex >= 0) {
       const moved = Math.hypot(
         pos.x - pointerState.downCanvasPos.x,
         pos.y - pointerState.downCanvasPos.y,
@@ -951,13 +1166,30 @@ function initCanvasInteraction() {
   });
 
   const finishPointer = (event) => {
+    activePointers.delete(event.pointerId);
+
+    if (pointerState.mode === 'pinch') {
+      if (activePointers.size >= 2) {
+        tryStartPinchResize();
+        updateCanvasCursor(pointerToCanvas(event).x, pointerToCanvas(event).y);
+        return;
+      }
+
+      if (canvas.hasPointerCapture(event.pointerId)) {
+        canvas.releasePointerCapture(event.pointerId);
+      }
+      resetPointerGesture();
+      updateCanvasCursor(pointerToCanvas(event).x, pointerToCanvas(event).y);
+      return;
+    }
+
     if (event.pointerId !== pointerState.activePointerId) return;
 
     const pos = pointerToCanvas(event);
     const anchorIndex = pointerState.downAnchorIndex;
     const now = performance.now();
 
-    if (anchorIndex >= 0 && !pointerState.hasMoved) {
+    if (pointerState.mode === 'move' && anchorIndex >= 0 && !pointerState.hasMoved) {
       const isDoubleClick =
         pointerState.lastClickAnchorIndex === anchorIndex &&
         now - pointerState.lastClickTime <= DOUBLE_CLICK_MS;
@@ -971,17 +1203,17 @@ function initCanvasInteraction() {
         pointerState.lastClickTime = now;
         selectedAnchorIndex = anchorIndex;
       }
-    } else if (anchorIndex < 0 && !pointerState.hasMoved) {
+    } else if (pointerState.mode === 'none' && anchorIndex < 0 && !pointerState.hasMoved) {
       addOrbitalAnchor(pos.x, pos.y);
+    } else if (pointerState.mode === 'resize-bar' && anchorIndex >= 0) {
+      selectedAnchorIndex = anchorIndex;
     }
 
     if (canvas.hasPointerCapture(event.pointerId)) {
       canvas.releasePointerCapture(event.pointerId);
     }
 
-    pointerState.activePointerId = null;
-    pointerState.downAnchorIndex = -1;
-    pointerState.hasMoved = false;
+    resetPointerGesture();
     updateCanvasCursor(pos.x, pos.y);
   };
 
