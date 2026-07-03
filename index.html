@@ -26,6 +26,28 @@
     <div class="sidebar-panel sidebar-panel--active" id="panel-simulation" role="tabpanel" aria-labelledby="tab-simulation">
 
     <section class="sidebar__section">
+      <h2 class="sidebar__section-title">Mode</h2>
+
+      <fieldset class="control control--fieldset">
+        <legend class="control__label">Play mode</legend>
+        <div class="radio-group">
+          <label class="radio-option">
+            <input type="radio" name="playMode" value="sandbox" checked>
+            <span>Sandbox — free experiment</span>
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="playMode" value="game">
+            <span>Game — save particles in the portal</span>
+          </label>
+        </div>
+      </fieldset>
+
+      <p class="sidebar__hint sidebar__hint--game" id="gameModeHint" hidden>
+        Guide particles from the left emitter into the portal on the right. Click the canvas to place anchors and steer their path.
+      </p>
+    </section>
+
+    <section class="sidebar__section sandbox-only" id="section-style-preset">
       <h2 class="sidebar__section-title">Style Preset</h2>
 
       <label class="control">
@@ -39,12 +61,12 @@
     <section class="sidebar__section">
       <h2 class="sidebar__section-title">Particles</h2>
 
-      <label class="control">
+      <label class="control sandbox-only">
         <span class="control__label">Spawn rate <output id="spawnRateValue">8</output>/s</span>
         <input type="range" id="spawnRate" min="1" max="60" value="8" step="1">
       </label>
 
-      <label class="control">
+      <label class="control sandbox-only">
         <span class="control__label">Lifespan <output id="lifespanValue">4.0</output>s</span>
         <input type="range" id="lifespan" min="0.5" max="30" value="4" step="0.5">
       </label>
@@ -54,7 +76,7 @@
         <input type="range" id="particleSize" min="1" max="8" value="3" step="0.5">
       </label>
 
-      <fieldset class="control control--fieldset">
+      <fieldset class="control control--fieldset sandbox-only">
         <legend class="control__label">Emitter style</legend>
         <div class="radio-group">
           <label class="radio-option">
@@ -137,15 +159,17 @@
     <section class="sidebar__section">
       <h2 class="sidebar__section-title">Motion &amp; Gravity</h2>
 
-      <label class="control">
-        <span class="control__label">Speed min <output id="speedMinValue">40</output></span>
-        <input type="range" id="speedMin" min="10" max="200" value="40" step="5">
-      </label>
+      <div class="sandbox-only" id="speedControls">
+        <label class="control">
+          <span class="control__label">Speed min <output id="speedMinValue">40</output></span>
+          <input type="range" id="speedMin" min="10" max="200" value="40" step="5">
+        </label>
 
-      <label class="control">
-        <span class="control__label">Speed max <output id="speedMaxValue">120</output></span>
-        <input type="range" id="speedMax" min="20" max="400" value="120" step="5">
-      </label>
+        <label class="control">
+          <span class="control__label">Speed max <output id="speedMaxValue">120</output></span>
+          <input type="range" id="speedMax" min="20" max="400" value="120" step="5">
+        </label>
+      </div>
 
       <p class="sidebar__hint">Click empty space to place anchors. Drag to move, double-click to toggle pull/push. Scroll or drag the mass bar to resize; pinch with two fingers on mobile.</p>
 
@@ -175,7 +199,7 @@
 
     <footer class="sidebar__footer">
       <button type="button" id="clearAnchorsBtn" class="btn">Clear all anchors</button>
-      <button type="button" id="clearBtn" class="btn btn--secondary">Clear particles</button>
+      <button type="button" id="clearBtn" class="btn btn--secondary sandbox-only">Clear particles</button>
     </footer>
 
     </div><!-- /panel-simulation -->
@@ -215,6 +239,67 @@
 
   <main class="stage">
     <canvas id="canvas"></canvas>
+
+    <div class="game-overlay" id="gameOverlay" hidden>
+      <div class="game-overlay__panel">
+        <div class="game-overlay__header">
+          <span class="game-overlay__level" id="gameLevelLabel">Level 1</span>
+          <span class="game-overlay__objective" id="gameObjective">Save 80% of particles</span>
+        </div>
+        <div class="game-overlay__progress">
+          <div class="game-overlay__progress-track">
+            <div class="game-overlay__progress-fill" id="gameProgressFill"></div>
+            <div class="game-overlay__progress-target" id="gameProgressTarget"></div>
+          </div>
+          <span class="game-overlay__progress-label" id="gameProgressLabel">0%</span>
+        </div>
+        <div class="game-overlay__stats">
+          <span class="game-overlay__stat">
+            <span class="game-overlay__stat-key">Saved</span>
+            <span class="game-overlay__stat-val" id="gameSavedCount">0</span>
+          </span>
+          <span class="game-overlay__stat">
+            <span class="game-overlay__stat-key">Spawned</span>
+            <span class="game-overlay__stat-val" id="gameSpawnedCount">0</span>
+          </span>
+          <span class="game-overlay__stat">
+            <span class="game-overlay__stat-key">Time</span>
+            <span class="game-overlay__stat-val" id="gameTimeRemaining">—</span>
+          </span>
+          <span class="game-overlay__stat">
+            <span class="game-overlay__stat-key">Left</span>
+            <span class="game-overlay__stat-val" id="gameParticlesRemaining">—</span>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div class="game-modal" id="victoryModal" hidden>
+      <div class="game-modal__backdrop"></div>
+      <div class="game-modal__card" role="dialog" aria-labelledby="victoryTitle" aria-modal="true">
+        <h2 class="game-modal__title" id="victoryTitle">Victory!</h2>
+        <p class="game-modal__message" id="victoryMessage">You saved enough particles to stabilize the portal.</p>
+        <p class="game-modal__score" id="victoryScore">80% saved</p>
+        <div class="game-modal__actions">
+          <button type="button" class="btn btn--accent" id="nextLevelBtn">Next level</button>
+          <button type="button" class="btn" id="retryLevelBtn">Retry</button>
+          <button type="button" class="btn btn--secondary" id="sandboxFromVictoryBtn">Sandbox</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="game-modal" id="defeatModal" hidden>
+      <div class="game-modal__backdrop"></div>
+      <div class="game-modal__card" role="dialog" aria-labelledby="defeatTitle" aria-modal="true">
+        <h2 class="game-modal__title game-modal__title--defeat" id="defeatTitle">Defeat</h2>
+        <p class="game-modal__message" id="defeatMessage">Not enough particles reached the portal in time.</p>
+        <p class="game-modal__score" id="defeatScore">45% saved</p>
+        <div class="game-modal__actions">
+          <button type="button" class="btn btn--accent" id="retryDefeatBtn">Retry</button>
+          <button type="button" class="btn btn--secondary" id="sandboxFromDefeatBtn">Sandbox</button>
+        </div>
+      </div>
+    </div>
   </main>
 
   <script type="module" src="app.js"></script>

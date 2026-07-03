@@ -128,6 +128,70 @@ const anchorConfig = {
   massScrollStep: 0.08,
 };
 
+// ── Game mode state machine ────────────────────────────────────────────────────
+
+/** @typedef {'sandbox' | 'game'} PlayMode */
+/** @typedef {'playing' | 'victory' | 'defeat'} LevelState */
+
+/** @typedef {{
+ *   targetPercentage: number,
+ *   timeLimit: number,
+ *   maxParticles: number,
+ *   spawnRate: number,
+ *   name: string,
+ *   lifespan: number,
+ *   speedMin: number,
+ *   speedMax: number,
+ * }} LevelConfig */
+
+/** @typedef {{ x: number, y: number, radius: number }} Portal */
+
+/** @typedef {{ x: number, y: number }} GameEmitter */
+
+/** @typedef {{ x: number, y: number, age: number, maxAge: number, color: string, maxRadius: number }} PortalRipple */
+
+/** @type {LevelConfig[]} */
+const LEVELS = [
+  { name: 'First Light', targetPercentage: 0.60, timeLimit: 45, maxParticles: 40, spawnRate: 6, lifespan: 12, speedMin: 40, speedMax: 90 },
+  { name: 'Orbital Drift', targetPercentage: 0.70, timeLimit: 60, maxParticles: 60, spawnRate: 8, lifespan: 10, speedMin: 50, speedMax: 110 },
+  { name: 'Gravity Gate', targetPercentage: 0.80, timeLimit: 75, maxParticles: 80, spawnRate: 10, lifespan: 9, speedMin: 60, speedMax: 130 },
+];
+
+/**
+ * Unified game state — decoupled from physics arrays.
+ * score tracks particles saved through the portal.
+ * @type {{
+ *   currentMode: PlayMode,
+ *   levelIndex: number,
+ *   score: number,
+ *   targetPercentage: number,
+ *   levelState: LevelState,
+ *   totalSpawned: number,
+ *   elapsedTime: number,
+ * }}
+ */
+const gameState = {
+  currentMode: 'sandbox',
+  levelIndex: 0,
+  score: 0,
+  targetPercentage: 0.8,
+  levelState: 'playing',
+  totalSpawned: 0,
+  elapsedTime: 0,
+};
+
+/** Portal on the right — particles within radius are absorbed */
+/** @type {Portal} */
+const portal = { x: 0, y: 0, radius: 48 };
+
+/** Fixed emitter on the left in game mode */
+/** @type {GameEmitter} */
+const gameEmitter = { x: 0, y: 0 };
+
+/** Dissolve ripples when particles enter the portal */
+/** @type {PortalRipple[]} */
+const portalRipples = [];
+
 /** Per-mode anchor appearance — attractive pulls (blue/green), repulsive pushes (red/pink) */
 const ANCHOR_APPEARANCE = {
   attractive: {
@@ -427,6 +491,266 @@ function pickPaletteColor() {
 }
 
 /**
+ * @returns {LevelConfig}
+ */
+function getCurrentLevel() {
+  return LEVELS[gameState.levelIndex] ?? LEVELS[0];
+}
+
+/**
+ * Success ratio: Particles Saved / Total Particles Spawned
+ * @returns {number}
+ */
+function getSuccessPercentage() {
+  if (gameState.totalSpawned === 0) return 0;
+  return gameState.score / gameState.totalSpawned;
+}
+
+/**
+ * Place portal (right) and emitter (left) using proportional canvas coordinates.
+ * @param {number} canvasWidth
+ * @param {number} canvasHeight
+ */
+function layoutGameObjects(canvasWidth, canvasHeight) {
+  const sizeRef = Math.min(canvasWidth, canvasHeight);
+  portal.x = canvasWidth * 0.88;
+  portal.y = canvasHeight * 0.5;
+  portal.radius = sizeRef * 0.07;
+  gameEmitter.x = canvasWidth * 0.1;
+  gameEmitter.y = canvasHeight * 0.5;
+}
+
+/**
+ * Reset canvas and start the current level in game mode.
+ * @param {number} canvasWidth
+ * @param {number} canvasHeight
+ */
+function startGameLevel(canvasWidth, canvasHeight) {
+  const level = getCurrentLevel();
+
+  clearParticles();
+  clearAnchors();
+  portalRipples.length = 0;
+
+  gameState.score = 0;
+  gameState.totalSpawned = 0;
+  gameState.elapsedTime = 0;
+  gameState.targetPercentage = level.targetPercentage;
+  gameState.levelState = 'playing';
+
+  layoutGameObjects(canvasWidth, canvasHeight);
+
+  emitterConfig.emitterStyle = 'stream';
+  emitterConfig.spawnRate = level.spawnRate;
+  emitterConfig.lifespan = level.lifespan;
+
+  hideGameModals();
+  updateGameOverlay();
+}
+
+/**
+ * @param {PlayMode} mode
+ */
+function setPlayMode(mode) {
+  gameState.currentMode = mode;
+
+  const gameOverlay = document.getElementById('gameOverlay');
+  const gameHint = document.getElementById('gameModeHint');
+  const isGame = mode === 'game';
+
+  if (gameOverlay) gameOverlay.hidden = !isGame;
+  if (gameHint) gameHint.hidden = !isGame;
+  updateSandboxOnlyControls(isGame);
+
+  if (isGame) {
+    startGameLevel(canvasWidth, canvasHeight);
+  } else {
+    gameState.levelState = 'playing';
+    hideGameModals();
+    portalRipples.length = 0;
+  }
+}
+
+function hideGameModals() {
+  const victoryModal = document.getElementById('victoryModal');
+  const defeatModal = document.getElementById('defeatModal');
+  if (victoryModal) victoryModal.hidden = true;
+  if (defeatModal) defeatModal.hidden = true;
+}
+
+/**
+ * Show/hide sidebar controls that only apply in sandbox mode.
+ * @param {boolean} isGame
+ */
+function updateSandboxOnlyControls(isGame) {
+  const sandboxOnly = document.querySelectorAll('.sandbox-only');
+  sandboxOnly.forEach((el) => {
+    /** @type {HTMLElement} */ (el).hidden = isGame;
+  });
+}
+
+/**
+ * @param {LevelState} state
+ */
+function setLevelState(state) {
+  gameState.levelState = state;
+}
+
+/**
+ * @param {Particle} particle
+ */
+function absorbParticleIntoPortal(particle) {
+  portalRipples.push({
+    x: particle.position.x,
+    y: particle.position.y,
+    age: 0,
+    maxAge: 0.55,
+    color: particle.color,
+    maxRadius: particle.radius * 5,
+  });
+
+  gameState.score += 1;
+}
+
+/**
+ * @param {number} dt
+ */
+function updatePortalRipples(dt) {
+  for (let i = portalRipples.length - 1; i >= 0; i--) {
+    portalRipples[i].age += dt;
+    if (portalRipples[i].age >= portalRipples[i].maxAge) {
+      portalRipples.splice(i, 1);
+    }
+  }
+}
+
+/**
+ * @param {Particle} particle
+ * @returns {boolean}
+ */
+function isParticleInPortal(particle) {
+  const dx = particle.position.x - portal.x;
+  const dy = particle.position.y - portal.y;
+  return Math.hypot(dx, dy) <= portal.radius + particle.radius * 0.5;
+}
+
+function checkGameEndConditions() {
+  if (gameState.levelState !== 'playing') return;
+
+  const level = getCurrentLevel();
+  const successPct = getSuccessPercentage();
+
+  if (gameState.totalSpawned > 0 && successPct >= level.targetPercentage) {
+    setLevelState('victory');
+    showVictoryModal();
+    return;
+  }
+
+  const timeUp = gameState.elapsedTime >= level.timeLimit;
+  const allSpawned = gameState.totalSpawned >= level.maxParticles;
+  const fieldClear = particles.length === 0;
+
+  if (timeUp || (allSpawned && fieldClear)) {
+    if (successPct < level.targetPercentage) {
+      setLevelState('defeat');
+      showDefeatModal();
+    }
+  }
+}
+
+function showVictoryModal() {
+  const level = getCurrentLevel();
+  const pct = Math.round(getSuccessPercentage() * 100);
+
+  const victoryModal = document.getElementById('victoryModal');
+  const victoryMessage = document.getElementById('victoryMessage');
+  const victoryScore = document.getElementById('victoryScore');
+  const nextLevelBtn = document.getElementById('nextLevelBtn');
+
+  if (victoryMessage) {
+    victoryMessage.textContent = `Level "${level.name}" complete — the portal is stable.`;
+  }
+  if (victoryScore) {
+    victoryScore.textContent = `${pct}% saved (${gameState.score} / ${gameState.totalSpawned})`;
+  }
+  if (nextLevelBtn) {
+    nextLevelBtn.hidden = gameState.levelIndex >= LEVELS.length - 1;
+  }
+  if (victoryModal) victoryModal.hidden = false;
+}
+
+function showDefeatModal() {
+  const pct = Math.round(getSuccessPercentage() * 100);
+  const level = getCurrentLevel();
+
+  const defeatModal = document.getElementById('defeatModal');
+  const defeatMessage = document.getElementById('defeatMessage');
+  const defeatScore = document.getElementById('defeatScore');
+
+  if (defeatMessage) {
+    defeatMessage.textContent = `Reach ${Math.round(level.targetPercentage * 100)}% to win. Click the canvas to place anchors and bend particles toward the portal.`;
+  }
+  if (defeatScore) {
+    defeatScore.textContent = `${pct}% saved (${gameState.score} / ${gameState.totalSpawned})`;
+  }
+  if (defeatModal) defeatModal.hidden = false;
+}
+
+function updateGameOverlay() {
+  if (gameState.currentMode !== 'game') return;
+
+  const level = getCurrentLevel();
+  const successPct = getSuccessPercentage();
+  const pctDisplay = Math.round(successPct * 100);
+  const targetDisplay = Math.round(level.targetPercentage * 100);
+  const timeLeft = Math.max(0, level.timeLimit - gameState.elapsedTime);
+  const particlesLeft = Math.max(0, level.maxParticles - gameState.totalSpawned);
+
+  const setText = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
+
+  setText('gameLevelLabel', `Level ${gameState.levelIndex + 1} — ${level.name}`);
+  setText('gameObjective', `Save ${targetDisplay}% of particles in the portal`);
+  setText('gameProgressLabel', `${pctDisplay}%`);
+  setText('gameSavedCount', String(gameState.score));
+  setText('gameSpawnedCount', String(gameState.totalSpawned));
+  setText('gameTimeRemaining', `${Math.ceil(timeLeft)}s`);
+  setText('gameParticlesRemaining', String(particlesLeft));
+
+  const fill = document.getElementById('gameProgressFill');
+  const target = document.getElementById('gameProgressTarget');
+  if (fill) fill.style.width = `${Math.min(100, successPct * 100)}%`;
+  if (target) target.style.left = `${level.targetPercentage * 100}%`;
+}
+
+/**
+ * Game-mode spawn from the left emitter, streaming toward the portal.
+ * @param {number} canvasWidth
+ * @param {number} canvasHeight
+ * @returns {{ x: number, y: number, vx: number, vy: number }}
+ */
+function computeGameSpawnParams(canvasWidth, canvasHeight) {
+  const level = getCurrentLevel();
+  const speed = randomRange(level.speedMin, level.speedMax);
+  const spreadY = canvasHeight * 0.08;
+  const y = gameEmitter.y + randomRange(-spreadY, spreadY);
+
+  // Gentle aim toward portal center so stream particles can reach the target
+  const dx = portal.x - gameEmitter.x;
+  const dy = portal.y - y;
+  const aimAngle = Math.atan2(dy, dx) + randomRange(-0.12, 0.12);
+
+  return {
+    x: gameEmitter.x,
+    y,
+    vx: Math.cos(aimAngle) * speed,
+    vy: Math.sin(aimAngle) * speed,
+  };
+}
+
+/**
  * Compute spawn position + velocity based on emitter style.
  * @param {EmitterStyle} style
  * @param {number} canvasWidth
@@ -476,15 +800,14 @@ function computeSpawnParams(style, canvasWidth, canvasHeight) {
  * Spawn one particle using the current emitter config.
  * @param {number} canvasWidth
  * @param {number} canvasHeight
+ * @param {boolean} [fromGameMode]
  */
-function spawnParticle(canvasWidth, canvasHeight) {
+function spawnParticle(canvasWidth, canvasHeight, fromGameMode = false) {
   if (particles.length >= physicsConfig.maxParticles) return;
 
-  const { x, y, vx, vy } = computeSpawnParams(
-    emitterConfig.emitterStyle,
-    canvasWidth,
-    canvasHeight,
-  );
+  const { x, y, vx, vy } = fromGameMode
+    ? computeGameSpawnParams(canvasWidth, canvasHeight)
+    : computeSpawnParams(emitterConfig.emitterStyle, canvasWidth, canvasHeight);
 
   /** @type {Particle} */
   const particle = {
@@ -499,6 +822,10 @@ function spawnParticle(canvasWidth, canvasHeight) {
   };
 
   particles.push(particle);
+
+  if (fromGameMode) {
+    gameState.totalSpawned += 1;
+  }
 }
 
 /**
@@ -561,13 +888,12 @@ function clearAnchors() {
 }
 
 /**
- * Integrate particle motion for one timestep.
- * v += a·dt,  p += v·dt  where a comes from all Orbital Anchors
+ * Integrate particle motion for one timestep (sandbox mode).
  * @param {number} dt - delta time in seconds
  * @param {number} canvasWidth
  * @param {number} canvasHeight
  */
-function updatePhysics(dt, canvasWidth, canvasHeight) {
+function updateSandboxPhysics(dt, canvasWidth, canvasHeight) {
   spawnAccumulator += dt;
   const spawnInterval = 1 / emitterConfig.spawnRate;
 
@@ -600,6 +926,76 @@ function updatePhysics(dt, canvasWidth, canvasHeight) {
 }
 
 /**
+ * Game mode physics — fixed emitter, portal absorption, win/lose tracking.
+ * @param {number} dt
+ * @param {number} canvasWidth
+ * @param {number} canvasHeight
+ */
+function updateGamePhysics(dt, canvasWidth, canvasHeight) {
+  updatePortalRipples(dt);
+
+  if (gameState.levelState !== 'playing') return;
+
+  gameState.elapsedTime += dt;
+
+  const level = getCurrentLevel();
+  spawnAccumulator += dt;
+  const spawnInterval = 1 / level.spawnRate;
+
+  while (
+    spawnAccumulator >= spawnInterval &&
+    gameState.totalSpawned < level.maxParticles
+  ) {
+    spawnParticle(canvasWidth, canvasHeight, true);
+    spawnAccumulator -= spawnInterval;
+  }
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+
+    const accel = computeAnchorAcceleration(p);
+    p.velocity.x += accel.x * dt;
+    p.velocity.y += accel.y * dt;
+    p.position.x += p.velocity.x * dt;
+    p.position.y += p.velocity.y * dt;
+    p.angle += p.angularVelocity * dt;
+    p.age += dt;
+
+    if (isParticleInPortal(p)) {
+      absorbParticleIntoPortal(p);
+      particles.splice(i, 1);
+      continue;
+    }
+
+    const outOfBounds =
+      p.position.x < -p.radius ||
+      p.position.x > canvasWidth + p.radius ||
+      p.position.y < -p.radius ||
+      p.position.y > canvasHeight + p.radius;
+
+    if (p.age >= p.lifespan || outOfBounds) {
+      particles.splice(i, 1);
+    }
+  }
+
+  checkGameEndConditions();
+  updateGameOverlay();
+}
+
+/**
+ * @param {number} dt
+ * @param {number} canvasWidth
+ * @param {number} canvasHeight
+ */
+function updatePhysics(dt, canvasWidth, canvasHeight) {
+  if (gameState.currentMode === 'game') {
+    updateGamePhysics(dt, canvasWidth, canvasHeight);
+  } else {
+    updateSandboxPhysics(dt, canvasWidth, canvasHeight);
+  }
+}
+
+/**
  * Scale all particle positions when the canvas is resized so coordinates stay proportional.
  * @param {number} scaleX
  * @param {number} scaleY
@@ -615,6 +1011,20 @@ function scaleParticlePositions(scaleX, scaleY) {
   for (const anchor of anchors) {
     anchor.position.x *= scaleX;
     anchor.position.y *= scaleY;
+  }
+
+  if (gameState.currentMode === 'game') {
+    portal.x *= scaleX;
+    portal.y *= scaleY;
+    portal.radius *= (scaleX + scaleY) * 0.5;
+    gameEmitter.x *= scaleX;
+    gameEmitter.y *= scaleY;
+
+    for (const ripple of portalRipples) {
+      ripple.x *= scaleX;
+      ripple.y *= scaleY;
+      ripple.maxRadius *= (scaleX + scaleY) * 0.5;
+    }
   }
 }
 
@@ -736,6 +1146,109 @@ function drawAnchor(ctx, anchor, isSelected) {
 }
 
 /**
+ * Pulsing portal rings on the right — absorption target in game mode.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {number} time
+ */
+function drawPortal(ctx, time) {
+  const { x, y, radius } = portal;
+  const ringCount = 4;
+
+  ctx.save();
+
+  const gradient = ctx.createRadialGradient(x, y, radius * 0.2, x, y, radius * 1.4);
+  gradient.addColorStop(0, 'rgba(110, 231, 255, 0.35)');
+  gradient.addColorStop(0.6, 'rgba(129, 140, 248, 0.12)');
+  gradient.addColorStop(1, 'rgba(129, 140, 248, 0)');
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.arc(x, y, radius * 1.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.lineWidth = 2;
+  for (let i = 0; i < ringCount; i++) {
+    const phase = (time * 0.5 + i * 0.2) % 1;
+    const ringRadius = radius * (0.55 + phase * 0.55);
+    const alpha = 0.5 * (1 - phase);
+    ctx.strokeStyle = `rgba(110, 231, 255, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(x, y, ringRadius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = 'rgba(251, 191, 36, 0.85)';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(110, 231, 255, 0.2)';
+  ctx.beginPath();
+  ctx.arc(x, y, radius * 0.35, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+/**
+ * Left-side emitter marker in game mode.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {number} time
+ */
+function drawGameEmitter(ctx, time) {
+  const { x, y } = gameEmitter;
+  const pulse = 0.5 + 0.5 * Math.sin(time * 4);
+
+  ctx.save();
+
+  ctx.fillStyle = `rgba(244, 114, 182, ${0.15 + pulse * 0.1})`;
+  ctx.beginPath();
+  ctx.arc(x, y, 18 + pulse * 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(244, 114, 182, 0.7)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x - 10, y);
+  ctx.lineTo(x + 14, y);
+  ctx.stroke();
+
+  ctx.fillStyle = '#f472b6';
+  ctx.beginPath();
+  ctx.arc(x, y, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+/**
+ * Expanding ripple when a particle dissolves into the portal.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {PortalRipple} ripple
+ */
+function drawPortalRipple(ctx, ripple) {
+  const t = ripple.age / ripple.maxAge;
+  const radius = ripple.maxRadius * (0.4 + t * 1.2);
+  const alpha = (1 - t) * 0.75;
+
+  ctx.save();
+  ctx.strokeStyle = ripple.color;
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = 2 * (1 - t * 0.5);
+  ctx.beginPath();
+  ctx.arc(ripple.x, ripple.y, radius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(110, 231, 255, 0.6)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(ripple.x, ripple.y, radius * 0.65, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+/**
  * @param {CanvasRenderingContext2D} ctx
  * @param {number} width
  * @param {number} height
@@ -756,6 +1269,11 @@ function render(ctx, width, height) {
   ctx.arc(width * 0.5, height * 0.5, 6, 0, Math.PI * 2);
   ctx.fill();
 
+  if (gameState.currentMode === 'game') {
+    drawGameEmitter(ctx, simTime);
+    drawPortal(ctx, simTime);
+  }
+
   for (let i = 0; i < anchors.length; i++) {
     drawAnchor(ctx, anchors[i], i === selectedAnchorIndex);
   }
@@ -767,6 +1285,10 @@ function render(ctx, width, height) {
     const sizeScale = visualConfig.sizeDecay ? Math.max(0, 1 - lifeRatio) : 1;
     const drawRadius = p.radius * sizeScale;
     drawAsset(ctx, p.position.x, p.position.y, drawRadius, p.color, alpha, p.angle);
+  }
+
+  for (const ripple of portalRipples) {
+    drawPortalRipple(ctx, ripple);
   }
 
   ctx.globalAlpha = 1;
@@ -805,6 +1327,10 @@ function resizeCanvas() {
   canvas.height = Math.round(cssHeight * dpr);
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  if (gameState.currentMode === 'game') {
+    layoutGameObjects(canvasWidth, canvasHeight);
+  }
 }
 
 // ── Game loop (delta-time rAF) ────────────────────────────────────────────────
@@ -1026,6 +1552,8 @@ function initUI() {
   document.getElementById('clearAnchorsBtn').addEventListener('click', clearAnchors);
 
   initCanvasInteraction();
+  initGameModeUI();
+  updateSandboxOnlyControls(gameState.currentMode === 'game');
 
   syncPaletteInputs(emitterConfig.palette);
 
@@ -1038,6 +1566,49 @@ function initUI() {
       assetSelect.value = ASSET_TYPES.sprite;
     },
   });
+}
+
+// ── Game mode UI ──────────────────────────────────────────────────────────────
+
+function initGameModeUI() {
+  const modeRadios = document.querySelectorAll('input[name="playMode"]');
+  modeRadios.forEach((radio) => {
+    const onModeSelect = () => {
+      if (/** @type {HTMLInputElement} */ (radio).checked) {
+        setPlayMode(/** @type {PlayMode} */ (/** @type {HTMLInputElement} */ (radio).value));
+      }
+    };
+    radio.addEventListener('change', onModeSelect);
+    radio.addEventListener('input', onModeSelect);
+  });
+
+  document.getElementById('nextLevelBtn')?.addEventListener('click', () => {
+    if (gameState.levelIndex < LEVELS.length - 1) {
+      gameState.levelIndex += 1;
+      startGameLevel(canvasWidth, canvasHeight);
+    }
+  });
+
+  document.getElementById('retryLevelBtn')?.addEventListener('click', () => {
+    startGameLevel(canvasWidth, canvasHeight);
+  });
+
+  document.getElementById('retryDefeatBtn')?.addEventListener('click', () => {
+    startGameLevel(canvasWidth, canvasHeight);
+  });
+
+  const switchToSandbox = () => {
+    const sandboxRadio = /** @type {HTMLInputElement | null} */ (
+      document.querySelector('input[name="playMode"][value="sandbox"]')
+    );
+    if (sandboxRadio) {
+      sandboxRadio.checked = true;
+      setPlayMode('sandbox');
+    }
+  };
+
+  document.getElementById('sandboxFromVictoryBtn')?.addEventListener('click', switchToSandbox);
+  document.getElementById('sandboxFromDefeatBtn')?.addEventListener('click', switchToSandbox);
 }
 
 // ── Canvas pointer interaction (drag, spawn, toggle, mass scroll) ─────────────

@@ -85,6 +85,16 @@ body {
   color: var(--text-secondary);
 }
 
+#speedControls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+
+.sandbox-only[hidden] {
+  display: none !important;
+}
+
 .sidebar__stats {
   margin-top: auto;
 }
@@ -483,4 +493,178 @@ input[type="color"] {
   height: 100%;
   cursor: crosshair;
   touch-action: none;
+}
+
+/* ── Game overlay ──────────────────────────────────────────── */
+
+.game-overlay[hidden],
+.game-modal[hidden] {
+  display: none !important;
+}
+
+.game-overlay {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  right: 1rem;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.game-overlay__panel {
+  max-width: 420px;
+  padding: 0.875rem 1rem;
+  background: rgba(19, 22, 30, 0.88);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.game-overlay__header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.game-overlay__level {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.game-overlay__objective {
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+}
+
+.game-overlay__progress {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-bottom: 0.625rem;
+}
+
+.game-overlay__progress-track {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  background: var(--bg-elevated);
+  border-radius: 4px;
+  overflow: visible;
+}
+
+.game-overlay__progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+  border-radius: 4px;
+  transition: width 0.2s ease;
+}
+
+.game-overlay__progress-target {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: #fbbf24;
+  border-radius: 1px;
+  box-shadow: 0 0 6px rgba(251, 191, 36, 0.6);
+}
+
+.game-overlay__progress-label {
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  min-width: 2.5rem;
+  text-align: right;
+}
+
+.game-overlay__stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+}
+
+.game-overlay__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.game-overlay__stat-key {
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.game-overlay__stat-val {
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* ── Game modals ───────────────────────────────────────────── */
+
+.game-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.game-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(13, 15, 20, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.game-modal__card {
+  position: relative;
+  width: min(360px, calc(100% - 2rem));
+  padding: 1.5rem;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+
+.game-modal__title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 0.5rem;
+}
+
+.game-modal__title--defeat {
+  color: #f472b6;
+}
+
+.game-modal__message {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 0.75rem;
+}
+
+.game-modal__score {
+  font-size: 1.125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  margin-bottom: 1.25rem;
+}
+
+.game-modal__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
