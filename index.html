@@ -43,7 +43,7 @@
       </fieldset>
 
       <p class="sidebar__hint sidebar__hint--game" id="gameModeHint" hidden>
-        Guide particles from the left emitter into the portal on the right. Click the canvas to place anchors and steer their path.
+        Place anchors on the canvas, then press Start level. Anchors cannot go on the portal, and each level limits how many you can place.
       </p>
     </section>
 
@@ -228,7 +228,7 @@
       </div>
     </section>
 
-    <section class="sidebar__section">
+    <section class="sidebar__section sidebar__sticky-footer">
       <button type="button" id="spriteApplyBtn" class="btn btn--accent">Apply to Particles</button>
       <p class="sidebar__hint">New particles will use your pixel art sprite.</p>
     </section>
@@ -246,7 +246,10 @@
           <span class="game-overlay__level" id="gameLevelLabel">Level 1</span>
           <span class="game-overlay__objective" id="gameObjective">Save 80% of particles</span>
         </div>
-        <div class="game-overlay__progress">
+        <div class="game-overlay__setup" id="gameSetupPanel">
+          <button type="button" id="startLevelBtn" class="btn btn--accent game-overlay__start-btn">Start level</button>
+        </div>
+        <div class="game-overlay__progress" id="gameProgressPanel" hidden>
           <div class="game-overlay__progress-track">
             <div class="game-overlay__progress-fill" id="gameProgressFill"></div>
             <div class="game-overlay__progress-target" id="gameProgressTarget"></div>
@@ -269,6 +272,10 @@
           <span class="game-overlay__stat">
             <span class="game-overlay__stat-key">Left</span>
             <span class="game-overlay__stat-val" id="gameParticlesRemaining">—</span>
+          </span>
+          <span class="game-overlay__stat">
+            <span class="game-overlay__stat-key">Anchors</span>
+            <span class="game-overlay__stat-val" id="gameAnchorCount">0/2</span>
           </span>
         </div>
       </div>
