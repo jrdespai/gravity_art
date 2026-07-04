@@ -131,7 +131,7 @@ const anchorConfig = {
 // ── Game mode state machine ────────────────────────────────────────────────────
 
 /** @typedef {'sandbox' | 'game'} PlayMode */
-/** @typedef {'playing' | 'victory' | 'defeat'} LevelState */
+/** @typedef {'setup' | 'playing' | 'victory' | 'defeat'} LevelState */
 
 /** @typedef {{
  *   targetPercentage: number,
@@ -142,6 +142,9 @@ const anchorConfig = {
  *   lifespan: number,
  *   speedMin: number,
  *   speedMax: number,
+ *   maxAnchors: number,
+ *   aimSpread: number,
+ *   spawnSpread: number,
  * }} LevelConfig */
 
 /** @typedef {{ x: number, y: number, radius: number }} Portal */
@@ -152,9 +155,9 @@ const anchorConfig = {
 
 /** @type {LevelConfig[]} */
 const LEVELS = [
-  { name: 'First Light', targetPercentage: 0.60, timeLimit: 45, maxParticles: 40, spawnRate: 6, lifespan: 12, speedMin: 40, speedMax: 90 },
-  { name: 'Orbital Drift', targetPercentage: 0.70, timeLimit: 60, maxParticles: 60, spawnRate: 8, lifespan: 10, speedMin: 50, speedMax: 110 },
-  { name: 'Gravity Gate', targetPercentage: 0.80, timeLimit: 75, maxParticles: 80, spawnRate: 10, lifespan: 9, speedMin: 60, speedMax: 130 },
+  { name: 'First Light', targetPercentage: 0.60, timeLimit: 45, maxParticles: 40, spawnRate: 6, lifespan: 24, speedMin: 55, speedMax: 85, maxAnchors: 2, aimSpread: 0.22, spawnSpread: 0.12 },
+  { name: 'Orbital Drift', targetPercentage: 0.70, timeLimit: 60, maxParticles: 60, spawnRate: 8, lifespan: 20, speedMin: 50, speedMax: 110, maxAnchors: 3, aimSpread: 0.30, spawnSpread: 0.15 },
+  { name: 'Gravity Gate', targetPercentage: 0.80, timeLimit: 75, maxParticles: 80, spawnRate: 10, lifespan: 18, speedMin: 60, speedMax: 130, maxAnchors: 4, aimSpread: 0.38, spawnSpread: 0.18 },
 ];
 
 /**
@@ -521,6 +524,47 @@ function layoutGameObjects(canvasWidth, canvasHeight) {
 }
 
 /**
+ * Game-only no-anchor radius around the portal — blocks portal camping exploit.
+ * @returns {number}
+ */
+function getPortalExclusionRadius() {
+  return portal.radius * 1.75;
+}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @returns {boolean}
+ */
+function isInsidePortalExclusionZone(x, y) {
+  if (gameState.currentMode !== 'game') return false;
+  const dx = x - portal.x;
+  const dy = y - portal.y;
+  return Math.hypot(dx, dy) < getPortalExclusionRadius();
+}
+
+/**
+ * Push a position to the nearest point outside the portal exclusion zone.
+ * @param {number} x
+ * @param {number} y
+ * @returns {Vec2}
+ */
+function clampOutsidePortalExclusion(x, y) {
+  if (gameState.currentMode !== 'game') return { x, y };
+
+  const exclusionR = getPortalExclusionRadius();
+  const dx = x - portal.x;
+  const dy = y - portal.y;
+  const dist = Math.hypot(dx, dy);
+
+  if (dist >= exclusionR) return { x, y };
+  if (dist < 1e-6) return { x: portal.x + exclusionR, y: portal.y };
+
+  const scale = exclusionR / dist;
+  return { x: portal.x + dx * scale, y: portal.y + dy * scale };
+}
+
+/**
  * Reset canvas and start the current level in game mode.
  * @param {number} canvasWidth
  * @param {number} canvasHeight
@@ -536,15 +580,28 @@ function startGameLevel(canvasWidth, canvasHeight) {
   gameState.totalSpawned = 0;
   gameState.elapsedTime = 0;
   gameState.targetPercentage = level.targetPercentage;
-  gameState.levelState = 'playing';
+  gameState.levelState = 'setup';
 
   layoutGameObjects(canvasWidth, canvasHeight);
 
   emitterConfig.emitterStyle = 'stream';
   emitterConfig.spawnRate = level.spawnRate;
   emitterConfig.lifespan = level.lifespan;
+  spawnAccumulator = 0;
 
   hideGameModals();
+  updateGameOverlay();
+}
+
+/**
+ * Begin spawning after the player has placed anchors during setup.
+ */
+function beginGameLevel() {
+  if (gameState.currentMode !== 'game' || gameState.levelState !== 'setup') return;
+
+  gameState.levelState = 'playing';
+  gameState.elapsedTime = 0;
+  spawnAccumulator = 0;
   updateGameOverlay();
 }
 
@@ -668,7 +725,7 @@ function showVictoryModal() {
   const nextLevelBtn = document.getElementById('nextLevelBtn');
 
   if (victoryMessage) {
-    victoryMessage.textContent = `Level "${level.name}" complete — the portal is stable.`;
+    victoryMessage.textContent = `Level "${level.name}" complete — you steered particles into the portal from mid-field.`;
   }
   if (victoryScore) {
     victoryScore.textContent = `${pct}% saved (${gameState.score} / ${gameState.totalSpawned})`;
@@ -688,7 +745,7 @@ function showDefeatModal() {
   const defeatScore = document.getElementById('defeatScore');
 
   if (defeatMessage) {
-    defeatMessage.textContent = `Reach ${Math.round(level.targetPercentage * 100)}% to win. Click the canvas to place anchors and bend particles toward the portal.`;
+    defeatMessage.textContent = `Reach ${Math.round(level.targetPercentage * 100)}% to win. Place anchors in mid-field — they cannot go on the portal.`;
   }
   if (defeatScore) {
     defeatScore.textContent = `${pct}% saved (${gameState.score} / ${gameState.totalSpawned})`;
@@ -700,6 +757,7 @@ function updateGameOverlay() {
   if (gameState.currentMode !== 'game') return;
 
   const level = getCurrentLevel();
+  const isSetup = gameState.levelState === 'setup';
   const successPct = getSuccessPercentage();
   const pctDisplay = Math.round(successPct * 100);
   const targetDisplay = Math.round(level.targetPercentage * 100);
@@ -712,16 +770,27 @@ function updateGameOverlay() {
   };
 
   setText('gameLevelLabel', `Level ${gameState.levelIndex + 1} — ${level.name}`);
-  setText('gameObjective', `Save ${targetDisplay}% of particles in the portal`);
-  setText('gameProgressLabel', `${pctDisplay}%`);
+  setText(
+    'gameObjective',
+    isSetup
+      ? 'Place anchors on the canvas, then start the level'
+      : `Save ${targetDisplay}% of particles in the portal`,
+  );
+  setText('gameProgressLabel', isSetup ? '—' : `${pctDisplay}%`);
   setText('gameSavedCount', String(gameState.score));
   setText('gameSpawnedCount', String(gameState.totalSpawned));
-  setText('gameTimeRemaining', `${Math.ceil(timeLeft)}s`);
-  setText('gameParticlesRemaining', String(particlesLeft));
+  setText('gameTimeRemaining', isSetup ? '—' : `${Math.ceil(timeLeft)}s`);
+  setText('gameParticlesRemaining', isSetup ? String(level.maxParticles) : String(particlesLeft));
+  setText('gameAnchorCount', `${anchors.length}/${level.maxAnchors}`);
+
+  const setupPanel = document.getElementById('gameSetupPanel');
+  const progressPanel = document.getElementById('gameProgressPanel');
+  if (setupPanel) setupPanel.hidden = !isSetup;
+  if (progressPanel) progressPanel.hidden = isSetup;
 
   const fill = document.getElementById('gameProgressFill');
   const target = document.getElementById('gameProgressTarget');
-  if (fill) fill.style.width = `${Math.min(100, successPct * 100)}%`;
+  if (fill) fill.style.width = isSetup ? '0%' : `${Math.min(100, successPct * 100)}%`;
   if (target) target.style.left = `${level.targetPercentage * 100}%`;
 }
 
@@ -734,13 +803,12 @@ function updateGameOverlay() {
 function computeGameSpawnParams(canvasWidth, canvasHeight) {
   const level = getCurrentLevel();
   const speed = randomRange(level.speedMin, level.speedMax);
-  const spreadY = canvasHeight * 0.08;
+  const spreadY = canvasHeight * level.spawnSpread;
   const y = gameEmitter.y + randomRange(-spreadY, spreadY);
 
-  // Gentle aim toward portal center so stream particles can reach the target
   const dx = portal.x - gameEmitter.x;
   const dy = portal.y - y;
-  const aimAngle = Math.atan2(dy, dx) + randomRange(-0.12, 0.12);
+  const aimAngle = Math.atan2(dy, dx) + randomRange(-level.aimSpread, level.aimSpread);
 
   return {
     x: gameEmitter.x,
@@ -869,8 +937,15 @@ function computeAnchorAcceleration(particle) {
 /**
  * @param {number} x
  * @param {number} y
+ * @returns {boolean} true if anchor was placed
  */
 function addOrbitalAnchor(x, y) {
+  if (gameState.currentMode === 'game') {
+    const level = getCurrentLevel();
+    if (anchors.length >= level.maxAnchors) return false;
+    if (isInsidePortalExclusionZone(x, y)) return false;
+  }
+
   anchors.push({
     position: { x, y },
     mass: anchorConfig.mass,
@@ -880,11 +955,21 @@ function addOrbitalAnchor(x, y) {
     baseRadius: anchorConfig.radius,
   });
   selectedAnchorIndex = anchors.length - 1;
+
+  if (gameState.currentMode === 'game') {
+    updateGameOverlay();
+  }
+
+  return true;
 }
 
 function clearAnchors() {
   anchors.length = 0;
   selectedAnchorIndex = -1;
+
+  if (gameState.currentMode === 'game') {
+    updateGameOverlay();
+  }
 }
 
 /**
@@ -1186,6 +1271,15 @@ function drawPortal(ctx, time) {
   ctx.beginPath();
   ctx.arc(x, y, radius * 0.35, 0, Math.PI * 2);
   ctx.fill();
+
+  const exclusionR = getPortalExclusionRadius();
+  ctx.setLineDash([6, 6]);
+  ctx.strokeStyle = 'rgba(239, 68, 68, 0.45)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(x, y, exclusionR, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
 
   ctx.restore();
 }
@@ -1597,6 +1691,10 @@ function initGameModeUI() {
     startGameLevel(canvasWidth, canvasHeight);
   });
 
+  document.getElementById('startLevelBtn')?.addEventListener('click', () => {
+    beginGameLevel();
+  });
+
   const switchToSandbox = () => {
     const sandboxRadio = /** @type {HTMLInputElement | null} */ (
       document.querySelector('input[name="playMode"][value="sandbox"]')
@@ -1728,8 +1826,12 @@ function initCanvasInteraction() {
 
       if (pointerState.hasMoved) {
         const anchor = anchors[pointerState.downAnchorIndex];
-        anchor.position.x = pos.x + pointerState.dragOffset.x;
-        anchor.position.y = pos.y + pointerState.dragOffset.y;
+        const clamped = clampOutsidePortalExclusion(
+          pos.x + pointerState.dragOffset.x,
+          pos.y + pointerState.dragOffset.y,
+        );
+        anchor.position.x = clamped.x;
+        anchor.position.y = clamped.y;
       }
     }
 
