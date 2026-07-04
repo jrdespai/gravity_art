@@ -1,5 +1,11 @@
 import { ASSET_TYPES, getAssetRenderer, setDesignerSprite } from './assetInjector.js';
 import { initSpriteDesigner } from './spriteDesigner.js';
+import {
+  applyObstacleCollisionsAndConsumption,
+  computeObstacleAcceleration,
+  createObstaclesFromConfig,
+  drawObstacles,
+} from './obstacles.js';
 
 // ── Declarative configuration ────────────────────────────────────────────────
 
@@ -145,6 +151,7 @@ const anchorConfig = {
  *   maxAnchors: number,
  *   aimSpread: number,
  *   spawnSpread: number,
+ *   obstacles?: import('./obstacles.js').ObstacleConfig[],
  * }} LevelConfig */
 
 /** @typedef {{ x: number, y: number, radius: number }} Portal */
@@ -155,9 +162,96 @@ const anchorConfig = {
 
 /** @type {LevelConfig[]} */
 const LEVELS = [
-  { name: 'First Light', targetPercentage: 0.60, timeLimit: 45, maxParticles: 40, spawnRate: 6, lifespan: 24, speedMin: 55, speedMax: 85, maxAnchors: 2, aimSpread: 0.22, spawnSpread: 0.12 },
-  { name: 'Orbital Drift', targetPercentage: 0.70, timeLimit: 60, maxParticles: 60, spawnRate: 8, lifespan: 20, speedMin: 50, speedMax: 110, maxAnchors: 3, aimSpread: 0.30, spawnSpread: 0.15 },
-  { name: 'Gravity Gate', targetPercentage: 0.80, timeLimit: 75, maxParticles: 80, spawnRate: 10, lifespan: 18, speedMin: 60, speedMax: 130, maxAnchors: 4, aimSpread: 0.38, spawnSpread: 0.18 },
+  {
+    name: 'First Light',
+    targetPercentage: 0.60,
+    timeLimit: 45,
+    maxParticles: 40,
+    spawnRate: 6,
+    lifespan: 24,
+    speedMin: 55,
+    speedMax: 85,
+    maxAnchors: 2,
+    aimSpread: 0.22,
+    spawnSpread: 0.12,
+  },
+  {
+    name: 'Orbital Drift',
+    targetPercentage: 0.70,
+    timeLimit: 60,
+    maxParticles: 60,
+    spawnRate: 8,
+    lifespan: 20,
+    speedMin: 50,
+    speedMax: 110,
+    maxAnchors: 3,
+    aimSpread: 0.30,
+    spawnSpread: 0.15,
+  },
+  {
+    name: 'Gravity Gate',
+    targetPercentage: 0.80,
+    timeLimit: 75,
+    maxParticles: 80,
+    spawnRate: 10,
+    lifespan: 18,
+    speedMin: 60,
+    speedMax: 130,
+    maxAnchors: 4,
+    aimSpread: 0.38,
+    spawnSpread: 0.18,
+  },
+  {
+    name: 'Event Horizon',
+    targetPercentage: 0.65,
+    timeLimit: 55,
+    maxParticles: 50,
+    spawnRate: 8,
+    lifespan: 20,
+    speedMin: 50,
+    speedMax: 110,
+    maxAnchors: 2,
+    aimSpread: 0.30,
+    spawnSpread: 0.15,
+    obstacles: [
+      { type: 'hostile_devourer', x: 0.52, y: 0.5, eventHorizonRadius: 0.055 },
+    ],
+  },
+  {
+    name: 'Rocky Passage',
+    targetPercentage: 0.72,
+    timeLimit: 65,
+    maxParticles: 65,
+    spawnRate: 9,
+    lifespan: 19,
+    speedMin: 55,
+    speedMax: 120,
+    maxAnchors: 3,
+    aimSpread: 0.34,
+    spawnSpread: 0.16,
+    obstacles: [
+      { type: 'hostile_devourer', x: 0.48, y: 0.42, eventHorizonRadius: 0.05 },
+      { type: 'solid_asteroid', x: 0.58, y: 0.58, radius: 0.045, restitution: 0.88 },
+    ],
+  },
+  {
+    name: 'Crosswind Gate',
+    targetPercentage: 0.80,
+    timeLimit: 70,
+    maxParticles: 75,
+    spawnRate: 10,
+    lifespan: 18,
+    speedMin: 60,
+    speedMax: 130,
+    maxAnchors: 4,
+    aimSpread: 0.38,
+    spawnSpread: 0.18,
+    obstacles: [
+      { type: 'hostile_devourer', x: 0.5, y: 0.35, eventHorizonRadius: 0.048 },
+      { type: 'solid_asteroid', x: 0.62, y: 0.52, radius: 0.05, restitution: 0.85 },
+      { type: 'wind_field', x: 0.28, y: 0.55, width: 0.14, height: 0.22, forceX: 0, forceY: -120 },
+    ],
+  },
 ];
 
 /**
@@ -194,6 +288,10 @@ const gameEmitter = { x: 0, y: 0 };
 /** Dissolve ripples when particles enter the portal */
 /** @type {PortalRipple[]} */
 const portalRipples = [];
+
+/** Static level hazards — loaded from level config in game mode */
+/** @type {import('./obstacles.js').Obstacle[]} */
+const activeObstacles = [];
 
 /** Per-mode anchor appearance — attractive pulls (blue/green), repulsive pushes (red/pink) */
 const ANCHOR_APPEARANCE = {
@@ -524,6 +622,20 @@ function layoutGameObjects(canvasWidth, canvasHeight) {
 }
 
 /**
+ * Build static obstacles from the current level's declarative config.
+ * @param {number} canvasWidth
+ * @param {number} canvasHeight
+ */
+function loadLevelObstacles(canvasWidth, canvasHeight) {
+  activeObstacles.length = 0;
+  const level = getCurrentLevel();
+  if (!level.obstacles || level.obstacles.length === 0) return;
+
+  const built = createObstaclesFromConfig(level.obstacles, canvasWidth, canvasHeight);
+  activeObstacles.push(...built);
+}
+
+/**
  * Game-only no-anchor radius around the portal — blocks portal camping exploit.
  * @returns {number}
  */
@@ -583,6 +695,7 @@ function startGameLevel(canvasWidth, canvasHeight) {
   gameState.levelState = 'setup';
 
   layoutGameObjects(canvasWidth, canvasHeight);
+  loadLevelObstacles(canvasWidth, canvasHeight);
 
   emitterConfig.emitterStyle = 'stream';
   emitterConfig.spawnRate = level.spawnRate;
@@ -625,6 +738,7 @@ function setPlayMode(mode) {
     gameState.levelState = 'playing';
     hideGameModals();
     portalRipples.length = 0;
+    activeObstacles.length = 0;
   }
 }
 
@@ -935,6 +1049,26 @@ function computeAnchorAcceleration(particle) {
 }
 
 /**
+ * Integrate one particle: anchor + obstacle forces, motion, collisions, consumption.
+ * @param {Particle} particle
+ * @param {number} dt
+ * @returns {boolean} true if a devourer removed the particle
+ */
+function integrateParticleMotion(particle, dt) {
+  const anchorAccel = computeAnchorAcceleration(particle);
+  const obstacleAccel = computeObstacleAcceleration(particle, activeObstacles, PARTICLE_MASS);
+
+  particle.velocity.x += (anchorAccel.x + obstacleAccel.x) * dt;
+  particle.velocity.y += (anchorAccel.y + obstacleAccel.y) * dt;
+  particle.position.x += particle.velocity.x * dt;
+  particle.position.y += particle.velocity.y * dt;
+  particle.angle += particle.angularVelocity * dt;
+  particle.age += dt;
+
+  return applyObstacleCollisionsAndConsumption(particle, activeObstacles);
+}
+
+/**
  * @param {number} x
  * @param {number} y
  * @returns {boolean} true if anchor was placed
@@ -990,13 +1124,10 @@ function updateSandboxPhysics(dt, canvasWidth, canvasHeight) {
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
 
-    const accel = computeAnchorAcceleration(p);
-    p.velocity.x += accel.x * dt;
-    p.velocity.y += accel.y * dt;
-    p.position.x += p.velocity.x * dt;
-    p.position.y += p.velocity.y * dt;
-    p.angle += p.angularVelocity * dt;
-    p.age += dt;
+    if (integrateParticleMotion(p, dt)) {
+      particles.splice(i, 1);
+      continue;
+    }
 
     const outOfBounds =
       p.position.x < -p.radius ||
@@ -1038,13 +1169,10 @@ function updateGamePhysics(dt, canvasWidth, canvasHeight) {
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
 
-    const accel = computeAnchorAcceleration(p);
-    p.velocity.x += accel.x * dt;
-    p.velocity.y += accel.y * dt;
-    p.position.x += p.velocity.x * dt;
-    p.position.y += p.velocity.y * dt;
-    p.angle += p.angularVelocity * dt;
-    p.age += dt;
+    if (integrateParticleMotion(p, dt)) {
+      particles.splice(i, 1);
+      continue;
+    }
 
     if (isParticleInPortal(p)) {
       absorbParticleIntoPortal(p);
@@ -1109,6 +1237,11 @@ function scaleParticlePositions(scaleX, scaleY) {
       ripple.x *= scaleX;
       ripple.y *= scaleY;
       ripple.maxRadius *= (scaleX + scaleY) * 0.5;
+    }
+
+    const avgScale = (scaleX + scaleY) * 0.5;
+    for (const obstacle of activeObstacles) {
+      obstacle.scale(scaleX, scaleY, avgScale);
     }
   }
 }
@@ -1366,6 +1499,7 @@ function render(ctx, width, height) {
   if (gameState.currentMode === 'game') {
     drawGameEmitter(ctx, simTime);
     drawPortal(ctx, simTime);
+    drawObstacles(ctx, activeObstacles, simTime);
   }
 
   for (let i = 0; i < anchors.length; i++) {
@@ -1424,6 +1558,7 @@ function resizeCanvas() {
 
   if (gameState.currentMode === 'game') {
     layoutGameObjects(canvasWidth, canvasHeight);
+    loadLevelObstacles(canvasWidth, canvasHeight);
   }
 }
 
